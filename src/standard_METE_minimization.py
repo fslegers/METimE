@@ -8,12 +8,22 @@ from scipy.integrate import quad
 import ast
 
 
+# TODO:
+#  Abes idee om sommaties niet voor alle n maar slechts een selectie hiervan te berekenen
+#  wel paralleliseren
+#  memoization
+
+# NOTE:
+#  Adding bounds (1/N, S/N) to the Lagrange multipliers (instead of (0, None)) makes the program
+#  much slower.
+
+
 def R_exponent(n, e, lambdas):
     l1, l2 = lambdas
     return -l1 * n - l2 * n * e
 
 
-def partition_function(state_variables, lambdas):
+def partition_function(lambdas, state_variables):
     S, N, E = state_variables
     l1, l2 = lambdas
 
@@ -26,21 +36,22 @@ def partition_function(state_variables, lambdas):
     return Z
 
 
+
 def entropy(lambdas, state_variables):
     S, N, E = state_variables
     l1, l2 = lambdas
 
-    Z = partition_function(state_variables, lambdas)
+    Z = partition_function(lambdas, state_variables)
 
     I = 0
     upper_bound = np.ceil((-np.log(0.1) + l1) / l2)
     for n in range(1, N-S+1):
-        I += quad(lambda e: np.exp(R_exponent(n, e, lambdas)) * (R_exponent(n, e, lambdas) - np.log(Z)),1, E, points = [1, upper_bound])[0]
+        integral = quad(lambda e: np.exp(R_exponent(n, e, lambdas)) * (R_exponent(n, e, lambdas) - np.log(Z)),1, E, points = [1, upper_bound])[0]
+        I += integral
     I = I / Z
 
-    #print("l1 = %f, l2 = %f, I = %f, Z = %f" % (l1, l2, I, Z))
-
     return I
+
 
 
 def constraint_1(lambdas, state_variables):
@@ -50,7 +61,7 @@ def constraint_1(lambdas, state_variables):
     S, N, E = state_variables
     l1, l2 = lambdas
 
-    Z = partition_function(state_variables, lambdas)
+    Z = partition_function(lambdas, state_variables)
 
     rhs = 0
     upper_bound = np.ceil((-np.log(0.1) + l1) / l2)
@@ -67,10 +78,10 @@ def constraint_2(lambdas, state_variables):
     S, N, E = state_variables
     l1, l2 = lambdas
 
-    Z = partition_function(state_variables, lambdas)
+    Z = partition_function(lambdas, state_variables)
 
     rhs = 0
-    upper_bound = np.ceil((-np.log(0.1) + l1) / l2)
+    upper_bound = np.ceil((-np.log(0.01) + l1) / l2)
     for n in range(1, N-S+1):
         rhs += n * quad(lambda e: e * np.exp(R_exponent(n, e, lambdas)), 1, E, points = [1, upper_bound])[0]
 
@@ -127,7 +138,7 @@ def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
     l1, l2 = lambdas[0], lambdas[1]
 
     meteSAD = []
-    Z = partition_function(state_variables, lambdas)
+    Z = partition_function(lambdas, state_variables)
     upper_bound = np.ceil((-np.log(0.1) + l1) / l2)
     for n in range(1, N-S+1):
         p_n = quad(lambda e: np.exp(R_exponent(n, e, optimized_lambdas)), 1, E, points=[1, upper_bound])[0]
@@ -229,7 +240,7 @@ def perform_optimization(initial_lambdas, state_variables):
     constraints = [
         {'type': 'eq', 'fun': constraint_1, 'args': (state_variables,)},
         {'type': 'eq', 'fun': constraint_2, 'args': (state_variables,)}]
-    boundaries = ((0, None), (0, None))
+    boundaries = ((0, None), (0, None)) # TODO: check what these bounds are based on
 
     result = minimize(entropy, initial_lambdas, args=(state_variables,), constraints=constraints, bounds=boundaries)
     optimized_lambdas = result.x
@@ -247,7 +258,7 @@ if __name__ == '__main__':
     data_set = "birds"
     df = load_data(data_set)
 
-    for row in range(0, df.size):
+    for row in range(0, len(df)):
         state_variables, census, empirical_sad = fetch_census_data(df, row)
         S, N, E = state_variables
 
@@ -264,8 +275,3 @@ if __name__ == '__main__':
 
         # Plot rank SADs
         plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
-
-
-
-
-

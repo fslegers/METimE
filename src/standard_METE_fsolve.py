@@ -1,88 +1,58 @@
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-from scipy.optimize import fsolve, root_scalar
-from scipy.integrate import quad
+from scipy.optimize import minimize, root_scalar
 import ast
+
+
+def R_exponent(n, e, lambdas):
+    l1, l2 = lambdas
+    return -l1 * n - l2 * n * e
 
 
 def partition_function(x, state_variables):
     S, N, E = state_variables
-    l1, l2 = x[0]**2, x[1]**2
+    l1, l2 = x[0], x[1]
 
     n_vec = np.arange(1, N+1)
     a = np.exp(-(l1 + l2)*n_vec)
     b = np.exp(-(l1+l2*E)*n_vec)
-    Z = sum(1/l2 * (a - b)/n_vec)
+    Z = sum((a - b)/n_vec) / l2
 
     return Z
 
 
 def all_constraints(x, state_variables):
     S, N, E = state_variables
-    l1, l2 = x[0]**2, x[1]**2
-
-
-    print("Lambda_1 = %.9f, Lambda_2 = %.9f" % (l1, l2))
-
+    l1, l2 = x[0], x[1]
 
     Z = partition_function(x, state_variables)
     if Z == 0:
         print("Warning. Partition function is zero.")
 
 
-    # Calculate 1/Z * partial derivative of Z with respect to lambda_1
-    a = np.exp(-(l1 + l2)*N) - 1
+    # Calculate partial derivative of ln(Z) with respect to lambda_1
+    a = np.exp(-(l1 + l2*E)) * (np.exp(-(l1 + l2*E)*N) - 1)
+    b = np.exp(-(l1 + l2*E)) - 1
+    c = np.exp(-(l1 + l2)) * (np.exp(-(l1 + l2)*N) - 1)
+    d = np.exp(-(l1 + l2)) - 1
+    partial_l1 = 1/Z * 1/l2 * (a/b - c/d)
+
+    # Calculate partial derivative of ln(Z) with respect to lambda_2
+    a = np.exp(-(l1 + l2)) * (np.exp(-(l1 + l2)*N) - 1)
     b = np.exp(-(l1 + l2)) - 1
-    c = 1 - np.exp(-(l1 + l2*E)*N)
-    d = 1 - np.exp(-(l1 + l2*E))
+    c = np.exp(-(l1 + l2*E)) * (np.exp(-(l1 + l2*E)*N) - 1)
+    d = np.exp(-(l1 + l2*E)) - 1
+    partial_l2 = 1/Z * 1/l2 * (-a/b - E*c/d) - 1/l2
 
-    partial_l1 = 1.0 / l2 * 1.0 / Z * (a/b - c/d)
+    #print("Error: %f" % ((partial_l1 - N/S)**2 + (partial_l2 - E/S)**2))
+    #return (partial_l1 - N/S)**2 + (partial_l2 - E/S)**2
 
+    print("Error: %f" % ((partial_l1 - N / S) ** 2))
+    return (partial_l1 - N/S)**2
 
-    # Calculate 1/Z * partial derivative of Z with respect to lambda_2
-    n_vec = np.arange(1, N+1)
-    f = l2 * n_vec * E - 1
-    g = np.exp(-(l1 + l2*E)*n_vec)
-    h = np.exp(-(l1 + l2)*n_vec)
-
-    partial_l2 = sum(1.0 / Z * 1.0/(l2**2) * (f * g - h)/n_vec)
-
-
-    return [partial_l1 - N/S,
-            partial_l2 - E/S]
-
-
-def constraint1(lambdas, state_variables):
-    S, N, E = state_variables
-    l1, l2 = lambdas
-
-    Z = partition_function(lambdas, state_variables)
-
-    a = np.exp(-(l1 + l2)*N) * (np.exp(l1 + l2)*N - 1)
-    b = np.exp(l1 + l2) - 1
-    c = 1 - np.exp(-(l1 + l2*E)*N)
-    d = 1 - np.exp(-(l1 + l2*E))
-    lhs = 1.0/Z * 1.0/l2 * (a/b + c/d)
-
-    return lhs - N/S
-
-
-def constraint2(lambdas, state_variables, tol=0.1):
-    S, N, E = state_variables
-    l1, l2 = lambdas
-
-    Z = partition_function(state_variables, lambdas)
-
-    upper_bound = np.ceil((-np.log(tol) + l1) / l2)
-
-    lhs = Z * E / S
-
-    rhs = 0
-    for n in range(1, N-S+1):
-        rhs += n * quad(lambda e: e * np.exp(R_exponent(n, e, lambdas)), 1, E, points = [1, upper_bound])[0]
-
-    return lhs - rhs
+    # return [partial_l1 - N/S,
+    #         partial_l2 - E/S]
 
 
 def load_data(data_set):
@@ -94,17 +64,6 @@ def load_data(data_set):
 
     df = pd.read_csv(filename)
     return df
-
-
-def beta_function(beta, S, N):
-    return (1 - np.exp(-beta)) / (np.exp(-beta) - np.exp(-beta*(N + 1))) * np.log(1.0/beta) - S/N
-
-
-def beta_derivative(beta, S, N):
-    term1 = -(1 - np.exp(-beta)) / (beta*(np.exp(-beta) - np.exp(-beta*(N + 1))))
-    term2 = -(1 - np.exp(-beta))*((-N-1)*(-np.exp(-beta*(N+1)))-np.exp(-beta))*np.log(1/beta) / (np.exp(-beta) - np.exp(-beta*(N+1)))**2
-    term3 = (np.exp(-beta) * np.log(1/beta)) / (np.exp(-beta) - np.exp(-beta*(N+1)))
-    return term1 + term2 + term3
 
 
 def make_initial_guess(state_variables):
@@ -131,68 +90,217 @@ def make_initial_guess(state_variables):
     return [l1, l2]
 
 
+def beta_function(beta, S, N):
+    return (1 - np.exp(-beta)) / (np.exp(-beta) - np.exp(-beta*(N + 1))) * np.log(1.0/beta) - S/N
+
+
+def beta_derivative(beta, S, N):
+    term1 = -(1 - np.exp(-beta)) / (beta*(np.exp(-beta) - np.exp(-beta*(N + 1))))
+    term2 = -(1 - np.exp(-beta))*((-N-1)*(-np.exp(-beta*(N+1)))-np.exp(-beta))*np.log(1/beta) / (np.exp(-beta) - np.exp(-beta*(N+1)))**2
+    term3 = (np.exp(-beta) * np.log(1/beta)) / (np.exp(-beta) - np.exp(-beta*(N+1)))
+    return term1 + term2 + term3
+
+
+def check_constraints(initial_lambdas, state_variables):
+    constr_1 = constraint_1(initial_lambdas, state_variables)
+    constr_2 = constraint_2(initial_lambdas, state_variables)
+    print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (constr_1, constr_2))
+    pass
+
+
+def constraint_1(lambdas, state_variables):
+    """Calculates the difference between the observed average number of individuals per species (N/S), and the expected
+    number of individuals per species, calculated from the ecosystem structure function (determined by the optimized
+    Lagrange multipliers lambda_1 and lambda_2)"""
+    S, N, E = state_variables
+    l1, l2 = lambdas
+
+    Z = partition_function(lambdas, state_variables)
+
+    a = np.exp(-(l1 + l2)) * (np.exp(-(l1 + l2)*N) - 1)
+    b = np.exp(-(l1 + l2)) - 1
+    c = np.exp(-(l1 + l2*E)) * (np.exp(-(l1 + l2*E)*N) - 1)
+    d = np.exp(-(l1 + l2*E)) - 1
+
+    rhs = 1/Z * 1/l2 * (a/b - c/d)
+
+    return rhs - N/S
+
+
+def constraint_2(lambdas, state_variables):
+    """Calculates the difference between the observed average metabolic rate per species (E/S), and the expected
+    metabolic rate per species, calculated from the ecosystem structure function (determined by the optimized
+    Lagrange multipliers lambda_1 and lambda_2)"""
+    S, N, E = state_variables
+    l1, l2 = lambdas
+
+    Z = partition_function(lambdas, state_variables)
+
+    rhs = 0
+    for n in range(1, N-S+1):
+        a = -l2*E*n - 1
+        b = l2 * n + 1
+        rhs += 1/n * np.exp(-l1*n) * (a * np.exp(-l2*E*n) + b * np.exp(-l2*n))
+
+    return 1/Z * 1/(l2**2) * rhs - E/S
+
+
+def fetch_census_data(df, row):
+    """
+    A function that fetches the census data from a given data set and census/row.
+    :param df: data set (bird or BCI data)
+    :param row: which row to fetch census data from
+    :return: state variables, census number and empirical species abundance distribution
+    """
+    S = int(df['S'][row])
+    N = int(df['N'][row])
+    E = df['E'][row]
+
+    empirical_sad = df['SAD'][row]
+    empirical_sad = ast.literal_eval(empirical_sad)
+
+    if data_set == "birds":
+        census = df['YEAR'][row]
+    elif data_set == "BCI":
+        census = df['PlotCensusNumber'][row]
+
+    print("State variables: S0 = %f, N0 = %f, E0 = %f" % (S, N, E))
+    print("Constraints: N0/S0 = %f, E0/S0 = %f" % (N / S, E / S))
+
+    return [S, N, E], census, empirical_sad
+
+
+def perform_optimization(lambdas, state_variables):
+    #objective_function = lambda x, state_variables: all_constraints(x, state_variables)
+    objective_function = lambda x, state_variables: constraint_1(x, state_variables)**2 + constraint_2(x, state_variables)**2
+
+    constraints = [
+        {'type': 'ineq', 'fun': lambda x: x[0]},
+        {'type': 'ineq', 'fun': lambda x: x[1]}]
+
+    lambdas = minimize(objective_function, lambdas,
+                       args=(state_variables,),
+                       method='SLSQP',
+                       options={'eps': 1e-10, 'disp':True},
+                       constraints=constraints,
+                       tol=1e-10)
+
+    return lambdas.x
+
+
+def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
+    l1, l2 = lambdas
+
+    meteSAD = []
+    Z = partition_function(lambdas, state_variables)
+
+    for n in range(1, N-S+1):
+        p_n = np.exp(-l1*n) * (np.exp(-l2*n) - np.exp(-l2*n*E))
+        p_n = p_n / (Z * l2 * n)
+        meteSAD.append(p_n)
+
+    print("CHECK: sum of meteSAD = %f \n \n" % sum(meteSAD))
+
+    # Expected number of species with abundance n
+    # for a community with n_species
+    exp_n_species = [S * i for i in meteSAD]
+
+    # Reverse so abundance goes from high to low
+    exp_n_species.reverse()
+
+    # Add abundances to df
+    exp_n_species = pd.DataFrame(exp_n_species, columns=['exp_n_species'])
+    abundances = pd.DataFrame(range(N-S, 0, -1), columns=['abundance'])
+    df = pd.concat([exp_n_species, abundances], axis = 1)
+
+    # Add a column with cummulative n species
+    df['cummulative'] = df['exp_n_species'].cumsum()
+
+    # Create plot
+    x = list(df['cummulative'][:-1])
+    x.insert(0, 0)
+
+    # Plot predicted rank sad
+    plt.bar(x = x,
+            height = df['abundance'],
+            width = df['exp_n_species'],
+            align = 'edge',
+            label = 'theoretical')
+
+    # Add empirical sad
+    plt.plot([i for i in range(1, S + 1)], empirical_sad, color='orange', label = 'empirical')
+    plt.scatter([i for i in range(1, S + 1)], empirical_sad, color='orange', linestyle='dashed')
+
+    if data_set == "birds":
+        y_lim = ((-0.1, 125))
+
+    elif data_set == "BCI":
+        y_lim = ((0, 55000))
+
+    plt.title(data_set + "\n %d" % int(census))
+
+    plt.xlabel("Rank")
+    plt.ylabel("Abundance (n)")
+    plt.ylim(y_lim)
+    plt.legend(loc=1)
+    plt.show()
+
+    #path = 'C:/Users/5605407/Documents/PhD/Chapter_2'
+    # plt.savefig(path + "/standard_METE_minimize_" + str(data_set) + "_" + str(int(year)) + ".png")
+    #plt.close()
+
 
 if __name__ == '__main__':
 
+    #data_set = "BCI"
     data_set = "birds"
     df = load_data(data_set)
 
-    #for row in range(0, df.size):
-    for row in [0]:
-        S = int(df['S'][row])
-        N = int(df['N'][row])
-        E = df['E'][row]
-
-        empirical_sad = df['SAD'][row]
-        empirical_sad = ast.literal_eval(empirical_sad)
-
-        if data_set == "birds":
-            year = df['YEAR'][row]
-        elif data_set == "BCI":
-            year = df['PlotCensusNumber'][row]
-
-        print("State variables: S0 = %f, N0 = %f, E0 = %f" % (S, N, E))
-        print("Constraints: N0/S0 = %f, E0/S0 = %f" % (N/S, E/S))
-
-        state_variables = [S, N, E]
-        initial_lambdas = [1.29*10**(-4), 1.25*10**(-7)]
-
-        print("Errors on constraint (before fsolve): \n %f (N/S)" % (constraint1(initial_lambdas, state_variables)))
-
-        optimized_lambdas = fsolve(all_constraints, args=state_variables, x0=initial_lambdas)
-        optimized_lambdas = [optimized_lambdas[0]**2, optimized_lambdas[1]**2]
-
-        print("Optimized Lagrange multipliers: l1 = %.9f, l2 = %.9f" % (optimized_lambdas[0], optimized_lambdas[1]))
-        print("Partition function Z:", partition_function(optimized_lambdas, state_variables))
-
-        # TODO (write in report):
-        #  fsolve can find negative values for lambda_1 and lambda_2. In this case, exponents can become too large
-        #  positive values, and np.exp() returns infinity.
-        #  we cannot change fsolves settings to make it find positive values.
-        #  however, we can define y = lambda^2 and use y in calculations.
+    for row in range(0, len(df)):
+        state_variables, census, empirical_sad = fetch_census_data(df, row)
+        S, N, E = state_variables
 
 
-        # Check constraints
-        constr_1 = constraint1(optimized_lambdas, state_variables)
-        #constr_2 = constraint2(optimized_lambdas, state_variables)
-        constr_2 = 0
-        print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (constr_1, constr_2))
+        # Determine starting lambdas
+        initial_lambdas = make_initial_guess(state_variables)
+        check_constraints(initial_lambdas, state_variables)
 
 
-        # # Turn results into SAD
-        # meteSAD = []
-        #
-        # upper_bound = np.ceil((-np.log(0.1) + optimized_lambdas[0]) / optimized_lambdas[1])
-        #
-        # total=0
-        # Z = partition_function(state_variables, optimized_lambdas)
-        # Z_test = 0
-        # for n in range(1, N + 1):
-        #     p_n = quad(lambda e: np.exp(R_exponent(n, e, optimized_lambdas)), 1, E, points = [1, upper_bound])[0]
-        #     Z_test += p_n
-        #     p_n = p_n/Z
-        #     meteSAD.append(p_n)
-        #
-        # print("Z = %f, sum of p_n = %f, sum of meteSAD = %f" % (Z, Z_test, sum(meteSAD)))
-        #
-        # plot_rank_SAD(meteSAD, empirical_sad, 'BCI', year)
+        # Run optimization
+        optimized_lambdas = perform_optimization(initial_lambdas, state_variables)
+        check_constraints(optimized_lambdas, state_variables)
+
+
+        # Plot rank SADs
+        plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
+
+
+
+
+
+
+########################################################################
+###                         Notes on meteR                           ###
+########################################################################
+
+
+# Equations that are solved in meteR:
+
+#     b < - La[1] + La[2]
+#     s < - La[1] + E0 * La[2]
+#
+#     n < - 1: N0
+#
+#     g.bn < - exp(-b * n)
+#     g.sn < - exp(-s * n)
+#
+#     univ.denom < - sum((g.bn - g.sn) / n)
+#     rhs.7.19.num < - sum(g.bn - g.sn)
+#     rhs.7.20.num < - sum(g.bn - E0 * g.sn)
+#
+#     ##  the two functions to solve
+#     f < - rep(NA, 2)
+#     f[1] < - rhs.7.19.num / univ.denom - N0 / S0
+#     f[2] < - (1 / La[2]) + rhs.7.20.num / univ.denom - E0 / S0
+#
+#     return (f)
