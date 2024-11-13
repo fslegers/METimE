@@ -5,11 +5,6 @@ from scipy.optimize import minimize, root_scalar
 import ast
 
 
-def R_exponent(n, e, lambdas):
-    l1, l2 = lambdas
-    return -l1 * n - l2 * n * e
-
-
 def partition_function(x, state_variables):
     S, N, E = state_variables
     l1, l2 = x[0], x[1]
@@ -22,37 +17,32 @@ def partition_function(x, state_variables):
     return Z
 
 
-def all_constraints(x, state_variables):
+def calc_constraints_errors(lambdas, state_variables):
+    """
+    Calculates the differences between the empirical and expected constraints (N/S and E/S). The expected values are
+    computed by evaluating the partial derivatives of log(Z) with respect to Lagrange multipliers lambda_1 and lambda_2.    to
+    :param lambdas: vector of Lagrange multipliers
+    :param state_variables: vector of S, N and E
+    :return: a vector of differences between (a) the partial derivative of log(Z) with respect to lambda_1 and N/S and
+     (b) the partial derivative of log(Z) with respect to lambda_2 and E/S
+    """
     S, N, E = state_variables
-    l1, l2 = x[0], x[1]
+    l1, l2 = lambdas[0], lambdas[1]
 
-    Z = partition_function(x, state_variables)
+    Z = partition_function(lambdas, state_variables)
     if Z == 0:
         print("Warning. Partition function is zero.")
 
-
-    # Calculate partial derivative of ln(Z) with respect to lambda_1
-    a = np.exp(-(l1 + l2*E)) * (np.exp(-(l1 + l2*E)*N) - 1)
-    b = np.exp(-(l1 + l2*E)) - 1
-    c = np.exp(-(l1 + l2)) * (np.exp(-(l1 + l2)*N) - 1)
-    d = np.exp(-(l1 + l2)) - 1
-    partial_l1 = 1/Z * 1/l2 * (a/b - c/d)
-
-    # Calculate partial derivative of ln(Z) with respect to lambda_2
     a = np.exp(-(l1 + l2)) * (np.exp(-(l1 + l2)*N) - 1)
     b = np.exp(-(l1 + l2)) - 1
     c = np.exp(-(l1 + l2*E)) * (np.exp(-(l1 + l2*E)*N) - 1)
     d = np.exp(-(l1 + l2*E)) - 1
-    partial_l2 = 1/Z * 1/l2 * (-a/b - E*c/d) - 1/l2
 
-    #print("Error: %f" % ((partial_l1 - N/S)**2 + (partial_l2 - E/S)**2))
-    #return (partial_l1 - N/S)**2 + (partial_l2 - E/S)**2
+    partial_l1 = 1/Z * 1/l2 * (a/b - c/d)
+    partial_l2 = 1/Z * 1/l2 * (a/b - E*(c/d)) + 1/l2
 
-    print("Error: %f" % ((partial_l1 - N / S) ** 2))
-    return (partial_l1 - N/S)**2
-
-    # return [partial_l1 - N/S,
-    #         partial_l2 - E/S]
+    return [partial_l1 - N/S,
+            partial_l2 - E/S]
 
 
 def load_data(data_set):
@@ -102,47 +92,9 @@ def beta_derivative(beta, S, N):
 
 
 def check_constraints(initial_lambdas, state_variables):
-    constr_1 = constraint_1(initial_lambdas, state_variables)
-    constr_2 = constraint_2(initial_lambdas, state_variables)
-    print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (constr_1, constr_2))
+    errors = calc_constraints_errors(initial_lambdas, state_variables)
+    print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (errors[0], errors[1]))
     pass
-
-
-def constraint_1(lambdas, state_variables):
-    """Calculates the difference between the observed average number of individuals per species (N/S), and the expected
-    number of individuals per species, calculated from the ecosystem structure function (determined by the optimized
-    Lagrange multipliers lambda_1 and lambda_2)"""
-    S, N, E = state_variables
-    l1, l2 = lambdas
-
-    Z = partition_function(lambdas, state_variables)
-
-    a = np.exp(-(l1 + l2)) * (np.exp(-(l1 + l2)*N) - 1)
-    b = np.exp(-(l1 + l2)) - 1
-    c = np.exp(-(l1 + l2*E)) * (np.exp(-(l1 + l2*E)*N) - 1)
-    d = np.exp(-(l1 + l2*E)) - 1
-
-    rhs = 1/Z * 1/l2 * (a/b - c/d)
-
-    return rhs - N/S
-
-
-def constraint_2(lambdas, state_variables):
-    """Calculates the difference between the observed average metabolic rate per species (E/S), and the expected
-    metabolic rate per species, calculated from the ecosystem structure function (determined by the optimized
-    Lagrange multipliers lambda_1 and lambda_2)"""
-    S, N, E = state_variables
-    l1, l2 = lambdas
-
-    Z = partition_function(lambdas, state_variables)
-
-    rhs = 0
-    for n in range(1, N-S+1):
-        a = -l2*E*n - 1
-        b = l2 * n + 1
-        rhs += 1/n * np.exp(-l1*n) * (a * np.exp(-l2*E*n) + b * np.exp(-l2*n))
-
-    return 1/Z * 1/(l2**2) * rhs - E/S
 
 
 def fetch_census_data(df, row):
@@ -171,9 +123,9 @@ def fetch_census_data(df, row):
 
 
 def perform_optimization(lambdas, state_variables):
-    #objective_function = lambda x, state_variables: all_constraints(x, state_variables)
-    objective_function = lambda x, state_variables: constraint_1(x, state_variables)**2 + constraint_2(x, state_variables)**2
+    objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables), [2,2]))
 
+    # Add constraints to make sure lambdas are positive
     constraints = [
         {'type': 'ineq', 'fun': lambda x: x[0]},
         {'type': 'ineq', 'fun': lambda x: x[1]}]
@@ -273,34 +225,3 @@ if __name__ == '__main__':
 
         # Plot rank SADs
         plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
-
-
-
-
-
-
-########################################################################
-###                         Notes on meteR                           ###
-########################################################################
-
-
-# Equations that are solved in meteR:
-
-#     b < - La[1] + La[2]
-#     s < - La[1] + E0 * La[2]
-#
-#     n < - 1: N0
-#
-#     g.bn < - exp(-b * n)
-#     g.sn < - exp(-s * n)
-#
-#     univ.denom < - sum((g.bn - g.sn) / n)
-#     rhs.7.19.num < - sum(g.bn - g.sn)
-#     rhs.7.20.num < - sum(g.bn - E0 * g.sn)
-#
-#     ##  the two functions to solve
-#     f < - rep(NA, 2)
-#     f[1] < - rhs.7.19.num / univ.denom - N0 / S0
-#     f[2] < - (1 / La[2]) + rhs.7.20.num / univ.denom - E0 / S0
-#
-#     return (f)
