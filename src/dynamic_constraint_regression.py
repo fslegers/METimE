@@ -1,11 +1,9 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import Ridge
 
 if __name__ == "__main__":
-
 
     # Load bird data
     path = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/Bird_Hubbard_Brook_39/raw_data_39.csv'

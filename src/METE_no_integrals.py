@@ -5,9 +5,9 @@ from scipy.optimize import minimize, root_scalar
 import ast
 
 
-def partition_function(x, state_variables):
+def partition_function(lambdas, state_variables):
     S, N, E = state_variables
-    l1, l2 = x[0], x[1]
+    l1, l2 = lambdas
 
     n_vec = np.arange(1, N+1)
     a = np.exp(-(l1 + l2)*n_vec)
@@ -27,9 +27,9 @@ def calc_constraints_errors(lambdas, state_variables):
      (b) the partial derivative of log(Z) with respect to lambda_2 and E/S
     """
     S, N, E = state_variables
-    l1, l2 = lambdas[0], lambdas[1]
+    l1, l2 = lambdas[0] / 100, lambdas[1] / 100         # TODO: remove division by 100 if not conducive
 
-    Z = partition_function(lambdas, state_variables)
+    Z = partition_function([l1, l2], state_variables)
     if Z == 0:
         print("Warning. Partition function is zero.")
 
@@ -43,17 +43,6 @@ def calc_constraints_errors(lambdas, state_variables):
 
     return [partial_l1 - N/S,
             partial_l2 - E/S]
-
-
-def load_data(data_set):
-    if data_set == "BCI":
-        filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METE_Input_BCI.csv'
-
-    elif data_set == "birds":
-        filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/METE_Input_39.csv'
-
-    df = pd.read_csv(filename)
-    return df
 
 
 def make_initial_guess(state_variables):
@@ -77,6 +66,8 @@ def make_initial_guess(state_variables):
     # TODO: root_scalar can take multiple guesses x0, so maybe we can also give it the optimized values from the
     #  previous year
 
+    l1, l2 = l1 * 100, l2 * 100     # TODO: remove multiplication by 100 if not conducive
+
     return [l1, l2]
 
 
@@ -95,6 +86,38 @@ def check_constraints(initial_lambdas, state_variables):
     errors = calc_constraints_errors(initial_lambdas, state_variables)
     print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (errors[0], errors[1]))
     pass
+
+
+def perform_optimization(lambdas, state_variables):
+    objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables), [2,2]))
+
+    # Add constraints to make sure lambdas are positive
+    constraints = [
+        {'type': 'ineq', 'fun': lambda x: x[0]},
+        {'type': 'ineq', 'fun': lambda x: x[1]}]
+
+    lambdas = minimize(objective_function, lambdas,
+                       args=(state_variables,),
+                       method='SLSQP',
+                       options={'eps': 1e-8, 'disp':True},
+                       constraints=constraints,
+                       tol=1e-8)
+
+    # eps: step size used for numerical approximation of the Jacobian
+    # tol: tolerance for termination.
+
+    return lambdas.x # up-scaled lambdas
+
+
+def load_data(data_set):
+    if data_set == "BCI":
+        filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METE_Input_BCI.csv'
+
+    elif data_set == "birds":
+        filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/METE_Input_39.csv'
+
+    df = pd.read_csv(filename)
+    return df
 
 
 def fetch_census_data(df, row):
@@ -122,29 +145,11 @@ def fetch_census_data(df, row):
     return [S, N, E], census, empirical_sad
 
 
-def perform_optimization(lambdas, state_variables):
-    objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables), [2,2]))
-
-    # Add constraints to make sure lambdas are positive
-    constraints = [
-        {'type': 'ineq', 'fun': lambda x: x[0]},
-        {'type': 'ineq', 'fun': lambda x: x[1]}]
-
-    lambdas = minimize(objective_function, lambdas,
-                       args=(state_variables,),
-                       method='SLSQP',
-                       options={'eps': 1e-10, 'disp':True},
-                       constraints=constraints,
-                       tol=1e-10)
-
-    return lambdas.x
-
-
 def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
-    l1, l2 = lambdas
+    l1, l2 = lambdas / 100
 
     meteSAD = []
-    Z = partition_function(lambdas, state_variables)
+    Z = partition_function([l1, l2], state_variables)
 
     for n in range(1, N-S+1):
         p_n = np.exp(-l1*n) * (np.exp(-l2*n) - np.exp(-l2*n*E))
@@ -204,8 +209,8 @@ def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
 
 if __name__ == '__main__':
 
-    #data_set = "BCI"
-    data_set = "birds"
+    data_set = "BCI"
+    #data_set = "birds"
     df = load_data(data_set)
 
     for row in range(0, len(df)):
@@ -225,3 +230,8 @@ if __name__ == '__main__':
 
         # Plot rank SADs
         plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
+
+
+# TODO:
+# Now, the solver is given a single initial guess. If computing for multiple censuses, previous solutions could also
+# serve as initial guess.
