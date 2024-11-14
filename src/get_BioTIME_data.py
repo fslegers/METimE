@@ -30,17 +30,13 @@ if __name__ == "__main__":
                 # Birds
                 if study_ID == "39":
 
-                    # TODO:
-                    #  sometimes abundance is decimal. what to do about this?
-                    df['ABUNDANCE'] = np.ceil(df['ABUNDANCE'])
-
                     # Load bird functional data
                     trait_path = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/elton_trait_database/BirdFuncDat.txt'
                     df_bird_biomass = pd.read_csv(trait_path, delimiter="\t", encoding="ISO-8859-1")[["Scientific", "BodyMass-Value"]]
                     df_bird_biomass.rename(columns={"Scientific": "GENUS_SPECIES"}, inplace=True)
 
                     # Estimate metabolic rate from biomass
-                    df_bird_biomass["Metabolic_Rate"] = 70 * df_bird_biomass["BodyMass-Value"]**0.75
+                    df_bird_biomass["Metabolic_Rate"] = 0.7725 * df_bird_biomass["BodyMass-Value"]**0.7050
                     df = df.merge(df_bird_biomass[['GENUS_SPECIES', 'Metabolic_Rate']], on = "GENUS_SPECIES", how = "left")
 
                     # Transform individual metabolic rates to reflect Abundance
@@ -64,7 +60,6 @@ if __name__ == "__main__":
                     # Some biomass information missing
                     break
 
-
                 # Calculate METE's state variables
                 df_METE = (
                     df.groupby(['DAY', 'MONTH', 'YEAR', 'LATITUDE', 'LONGITUDE'])
@@ -75,6 +70,10 @@ if __name__ == "__main__":
                     )
                     .reset_index()
                 )
+
+                # Ensure that total number of species/individuals are integers
+                df_METE['S'] = np.ceil(df_METE['S'])
+                df_METE['N'] = np.ceil(df_METE['N'])
 
                 # Calculate the empirical SAD
                 df_SAD = (

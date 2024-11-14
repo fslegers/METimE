@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -17,7 +18,7 @@ def partition_function(lambdas, state_variables):
     return Z
 
 
-def calc_constraints_errors(lambdas, state_variables):
+def calc_constraints_errors(lambdas, state_variables, scaling_component = 100):
     """
     Calculates the differences between the empirical and expected constraints (N/S and E/S). The expected values are
     computed by evaluating the partial derivatives of log(Z) with respect to Lagrange multipliers lambda_1 and lambda_2.    to
@@ -27,7 +28,7 @@ def calc_constraints_errors(lambdas, state_variables):
      (b) the partial derivative of log(Z) with respect to lambda_2 and E/S
     """
     S, N, E = state_variables
-    l1, l2 = lambdas[0] / 100, lambdas[1] / 100         # TODO: remove division by 100 if not conducive
+    l1, l2 = lambdas[0] / scaling_component, lambdas[1] / scaling_component
 
     Z = partition_function([l1, l2], state_variables)
     if Z == 0:
@@ -45,7 +46,7 @@ def calc_constraints_errors(lambdas, state_variables):
             partial_l2 - E/S]
 
 
-def make_initial_guess(state_variables):
+def make_initial_guess(state_variables, scaling_component=100):
     """
     A function that makes an initial guess for the Lagrange multipliers lambda1 and lambda2.
     Based on Eq 7.29 from Harte 2011 and meteR's function meteESF.mete.lambda
@@ -66,7 +67,11 @@ def make_initial_guess(state_variables):
     # TODO: root_scalar can take multiple guesses x0, so maybe we can also give it the optimized values from the
     #  previous year
 
-    l1, l2 = l1 * 100, l2 * 100     # TODO: remove multiplication by 100 if not conducive
+    if l1 < 0 or l2 < 0:
+        print("Initial guess for Lagrange multipliers is negative.")
+        l1, l2 = 0.05, 0.05
+
+    l1, l2 = l1 * scaling_component, l2 * scaling_component     # TODO: remove multiplication by 100 if not conducive
 
     return [l1, l2]
 
@@ -82,42 +87,54 @@ def beta_derivative(beta, S, N):
     return term1 + term2 + term3
 
 
-def check_constraints(initial_lambdas, state_variables):
-    errors = calc_constraints_errors(initial_lambdas, state_variables)
+def check_constraints(initial_lambdas, state_variables, scaling_component=100):
+    errors = calc_constraints_errors(initial_lambdas, state_variables, scaling_component)
     print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (errors[0], errors[1]))
     pass
 
 
-def perform_optimization(lambdas, state_variables):
-    objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables), [2,2]))
+def perform_optimization(guesses, state_variables, scaling_component=100):
+    objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables, scaling_component), [2,2]))
+    # objective_function = lambda x, state_variables: (
+    #         (calc_constraints_errors(x, state_variables, scaling_component)[0] * max(1, math.floor(math.log10(E/N))))**2 +
+    #         (calc_constraints_errors(x, state_variables, scaling_component)[1])**2)
 
     # Add constraints to make sure lambdas are positive
     constraints = [
         {'type': 'ineq', 'fun': lambda x: x[0]},
         {'type': 'ineq', 'fun': lambda x: x[1]}]
 
-    lambdas = minimize(objective_function, lambdas,
-                       args=(state_variables,),
-                       method='SLSQP',
-                       options={'eps': 1e-8, 'disp':True},
-                       constraints=constraints,
-                       tol=1e-8)
+    error = np.inf
+    for initial_guess in guesses[0:min(len(guesses), 4)]: # Also use previous 3 solutions as initial guess
+
+        sol = minimize(objective_function, initial_guess,
+                           args=(state_variables,),
+                           method='SLSQP',
+                           options={'eps': 1e-11, 'disp':True},
+                           constraints=constraints,
+                           tol=1e-11)
+
+        if sol.fun < error:
+            error = sol.fun
+            lambdas = sol.x
 
     # eps: step size used for numerical approximation of the Jacobian
     # tol: tolerance for termination.
 
-    return lambdas.x # up-scaled lambdas
+    return lambdas # up-scaled lambdas
 
 
 def load_data(data_set):
     if data_set == "BCI":
         filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METE_Input_BCI.csv'
+        scaling_component = 1e11
 
     elif data_set == "birds":
         filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/METE_Input_39.csv'
+        scaling_component = 10
 
     df = pd.read_csv(filename)
-    return df
+    return df, scaling_component
 
 
 def fetch_census_data(df, row):
@@ -139,14 +156,15 @@ def fetch_census_data(df, row):
     elif data_set == "BCI":
         census = df['PlotCensusNumber'][row]
 
-    print("State variables: S0 = %f, N0 = %f, E0 = %f" % (S, N, E))
-    print("Constraints: N0/S0 = %f, E0/S0 = %f" % (N / S, E / S))
+    print("Census: %d" % census)
+    print("State variables: S0 = %d, N0 = %d, E0 = %.3f" % (S, N, E))
+    print("Constraints: N0/S0 = %.3f, E0/S0 = %.3f" % (N / S, E / S))
 
     return [S, N, E], census, empirical_sad
 
 
 def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
-    l1, l2 = lambdas / 100
+    l1, l2 = lambdas
 
     meteSAD = []
     Z = partition_function([l1, l2], state_variables)
@@ -202,30 +220,40 @@ def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
     plt.legend(loc=1)
     plt.show()
 
-    #path = 'C:/Users/5605407/Documents/PhD/Chapter_2'
-    # plt.savefig(path + "/standard_METE_minimize_" + str(data_set) + "_" + str(int(year)) + ".png")
-    #plt.close()
+    # path = 'C:/Users/5605407/Documents/PhD/Chapter_2/Results/METE_no_integrals/' + str(data_set)
+    # plt.savefig(path + "/%d.png" % int(census))
+    # plt.close()
 
 
 if __name__ == '__main__':
 
     data_set = "BCI"
     #data_set = "birds"
-    df = load_data(data_set)
 
+    df, scaling_component = load_data(data_set)
+
+    previous_sol = []
     for row in range(0, len(df)):
         state_variables, census, empirical_sad = fetch_census_data(df, row)
         S, N, E = state_variables
 
 
         # Determine starting lambdas
-        initial_lambdas = make_initial_guess(state_variables)
-        check_constraints(initial_lambdas, state_variables)
+        theoretical_guess = make_initial_guess(state_variables, scaling_component)
+        check_constraints(theoretical_guess, state_variables, scaling_component)
 
 
         # Run optimization
-        optimized_lambdas = perform_optimization(initial_lambdas, state_variables)
-        check_constraints(optimized_lambdas, state_variables)
+        optimized_lambdas = perform_optimization([theoretical_guess] + previous_sol, state_variables, scaling_component)
+
+
+        # Save optimized_lambdas for next initial guess
+        check_constraints(optimized_lambdas, state_variables, scaling_component)
+        previous_sol = [optimized_lambdas] + previous_sol
+
+
+        # Turn back scaling of the lagrange multipliers
+        optimized_lambdas = optimized_lambdas / scaling_component
 
 
         # Plot rank SADs
