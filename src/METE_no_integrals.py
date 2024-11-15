@@ -62,16 +62,14 @@ def make_initial_guess(state_variables, scaling_component=100):
     l2 = S / (E - N)
     l1 = beta.root - l2
 
-    # TODO: method can be either 'brentq' or 'bisect', but 'bisect' hasn't been tested yet
 
-    # TODO: root_scalar can take multiple guesses x0, so maybe we can also give it the optimized values from the
-    #  previous year
-
+    # Prevent negative values for l1 and l2
     if l1 < 0 or l2 < 0:
         print("Initial guess for Lagrange multipliers is negative.")
         l1, l2 = 0.05, 0.05
 
-    l1, l2 = l1 * scaling_component, l2 * scaling_component     # TODO: remove multiplication by 100 if not conducive
+
+    l1, l2 = l1 * scaling_component, l2 * scaling_component
 
     return [l1, l2]
 
@@ -94,18 +92,19 @@ def check_constraints(initial_lambdas, state_variables, scaling_component=100):
 
 
 def perform_optimization(guesses, state_variables, scaling_component=100):
-    objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables, scaling_component), [2,2]))
-    # objective_function = lambda x, state_variables: (
-    #         (calc_constraints_errors(x, state_variables, scaling_component)[0] * max(1, math.floor(math.log10(E/N))))**2 +
-    #         (calc_constraints_errors(x, state_variables, scaling_component)[1])**2)
+    #objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables, scaling_component), [2,2]))
+    objective_function = lambda x, state_variables: (
+            (calc_constraints_errors(x, state_variables, scaling_component)[0] * max(1, math.floor(math.log10(E/N))))**2 +
+            (calc_constraints_errors(x, state_variables, scaling_component)[1])**2)
 
     # Add constraints to make sure lambdas are positive
     constraints = [
         {'type': 'ineq', 'fun': lambda x: x[0]},
         {'type': 'ineq', 'fun': lambda x: x[1]}]
 
+    # Perform minimize() using theoretical guess and previous 3 solutions as initial guess
     error = np.inf
-    for initial_guess in guesses[0:min(len(guesses), 4)]: # Also use previous 3 solutions as initial guess
+    for initial_guess in guesses[0:min(len(guesses), 4)]:
 
         sol = minimize(objective_function, initial_guess,
                            args=(state_variables,),
@@ -134,6 +133,7 @@ def load_data(data_set):
         scaling_component = 10
 
     df = pd.read_csv(filename)
+
     return df, scaling_component
 
 
@@ -257,9 +257,4 @@ if __name__ == '__main__':
 
 
         # Plot rank SADs
-        plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
-
-
-# TODO:
-# Now, the solver is given a single initial guess. If computing for multiple censuses, previous solutions could also
-# serve as initial guess.
+        # plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)

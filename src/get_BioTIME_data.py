@@ -30,12 +30,12 @@ if __name__ == "__main__":
                 # Birds
                 if study_ID == "39":
 
-                    # Load bird functional data
+                    # Load bird functional data (body mass)
                     trait_path = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/elton_trait_database/BirdFuncDat.txt'
                     df_bird_biomass = pd.read_csv(trait_path, delimiter="\t", encoding="ISO-8859-1")[["Scientific", "BodyMass-Value"]]
                     df_bird_biomass.rename(columns={"Scientific": "GENUS_SPECIES"}, inplace=True)
 
-                    # Estimate metabolic rate from biomass
+                    # Estimate metabolic rate from body mass
                     df_bird_biomass["Metabolic_Rate"] = 0.7725 * df_bird_biomass["BodyMass-Value"]**0.7050
                     df = df.merge(df_bird_biomass[['GENUS_SPECIES', 'Metabolic_Rate']], on = "GENUS_SPECIES", how = "left")
 
@@ -66,7 +66,7 @@ if __name__ == "__main__":
                     .agg(
                         S=('GENUS_SPECIES', 'nunique'),
                         N=('ABUNDANCE', 'sum'),
-                        E=('Metabolic_Rate', 'sum')
+                        E=('Metabolic_Rate', 'sum'),
                     )
                     .reset_index()
                 )
@@ -86,6 +86,22 @@ if __name__ == "__main__":
 
                 filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/METE_Input_' + str(study_ID) + '.csv'
                 df_METE.to_csv(filename)
+
+                # Add derivatives of state variables
+                df_METE['next_N'] = df_METE['N'].shift(-1)
+                df_METE['next_S'] = df_METE['S'].shift(-1)
+                df_METE['next_E'] = df_METE['E'].shift(-1)
+
+                df_METE.dropna()
+
+                df_METE['dN'] = df_METE['next_N'] - df_METE['N']
+                df_METE['dS'] = df_METE['next_S'] - df_METE['S']
+                df_METE['dE'] = df_METE['next_E'] - df_METE['E']
+
+                filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/dynaMETE_Input_' + str(
+                    study_ID) + '.csv'
+                df_METE.to_csv(filename)
+
 
 
 

@@ -54,6 +54,26 @@ if __name__ == "__main__":
     filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METE_Input_BCI.csv'
     df_METE.to_csv(filename, index=False)
 
+    # Add derivatives of state variables
+    df_METE['next_N'] = df_METE['N'].shift(-1)
+    df_METE['next_S'] = df_METE['S'].shift(-1)
+    df_METE['next_E'] = df_METE['E'].shift(-1)
+
+    df_METE.dropna()
+
+    df_METE['dN'] = df_METE['next_N'] - df_METE['N']
+    df_METE['dS'] = df_METE['next_S'] - df_METE['S']
+    df_METE['dE'] = df_METE['next_E'] - df_METE['E']
+
+    filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/dynaMETE_Input_BCI.csv'
+    df_METE.to_csv(filename)
+
+
+
+
+
+
+
 
 
 
