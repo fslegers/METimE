@@ -92,6 +92,8 @@ def check_constraints(initial_lambdas, state_variables, scaling_component=100):
 
 
 def perform_optimization(guesses, state_variables, scaling_component=100):
+    S, N, E = state_variables
+
     #objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables, scaling_component), [2,2]))
     objective_function = lambda x, state_variables: (
             (calc_constraints_errors(x, state_variables, scaling_component)[0] * max(1, math.floor(math.log10(E/N))))**2 +
@@ -125,7 +127,8 @@ def perform_optimization(guesses, state_variables, scaling_component=100):
 
 def load_data(data_set):
     if data_set == "BCI":
-        filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METE_Input_BCI.csv'
+        #filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METE_Input_BCI.csv'
+        filename = 'C:/Users/fleur/Documents/PythonProjects/METE_Input_BCI.csv'
         scaling_component = 1e11
 
     elif data_set == "birds":
@@ -137,7 +140,7 @@ def load_data(data_set):
     return df, scaling_component
 
 
-def fetch_census_data(df, row):
+def fetch_census_data(df, row, data_set):
     """
     A function that fetches the census data from a given data set and census/row.
     :param df: data set (bird or BCI data)
@@ -234,7 +237,7 @@ if __name__ == '__main__':
 
     previous_sol = []
     for row in range(0, len(df)):
-        state_variables, census, empirical_sad = fetch_census_data(df, row)
+        state_variables, census, empirical_sad = fetch_census_data(df, row, data_set)
         S, N, E = state_variables
 
 
