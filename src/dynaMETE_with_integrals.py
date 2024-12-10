@@ -18,7 +18,7 @@ def partition_function(lambdas, state_variables, coefficients):
     l1, l2, l3 = lambdas
 
     #upper_bound = min((-np.log(0.1) + l1) / l2, E)
-    upper_bound = 100
+    upper_bound = E
 
     Z = 0
     for n in range(1, N-S+1):
@@ -47,14 +47,17 @@ def partition_function(lambdas, state_variables, coefficients):
 #     return I
 
 
-def squared_error(lambdas, state_variables, coefficients):
+def squared_error(lambdas, state_variables, coefficients, scaling_component):
     S, N, E, dN = state_variables
-    l1, l2, l3 = lambdas
     phi1, phi2, phi3, phi4 = coefficients
+
+    l1, l2, l3 = lambdas
+    l1, l2, l3 = l1/scaling_component, l2/scaling_component, l3/scaling_component
+    lambdas = [l1, l2, l3]
 
     Z = partition_function(lambdas, state_variables, coefficients)
     # upper_bound = min((-np.log(0.1) + l1) / l2, E)
-    upper_bound = 100
+    upper_bound = E
 
     expected_values = [0,0,0]
     for n in range(1, N - S + 1):
@@ -70,7 +73,8 @@ def squared_error(lambdas, state_variables, coefficients):
     expected_values = [i/Z for i in expected_values]
 
     sum_of_squares = (expected_values[0] - N/S)**2 + (expected_values[1] - E/S)**2 + (expected_values[2] - dN)**2
-    print("sum of squares: %.9f " % sum_of_squares)
+
+    print(sum_of_squares)
     return sum_of_squares
 
 
@@ -84,7 +88,7 @@ def constraint_1(lambdas, state_variables, coefficients):
 
     Z = partition_function(lambdas, state_variables, coefficients)
     # upper_bound = min((-np.log(0.1) + l1) / l2, E)
-    upper_bound = 100
+    upper_bound = E
 
     rhs = 0
     for n in range(1, N-S+1):
@@ -101,7 +105,7 @@ def constraint_2(lambdas, state_variables, coefficients):
     l1, l2, l3 = lambdas
 
     Z = partition_function(lambdas, state_variables, coefficients)
-    upper_bound = 100
+    upper_bound = E
 
     rhs = 0
     for n in range(1, N-S+1):
@@ -119,7 +123,7 @@ def dynamic_constraint(lambdas, state_variables, coefficients):
     phi1, phi2, phi3, phi4 = coefficients
 
     Z = partition_function(lambdas, state_variables, coefficients)
-    upper_bound = 100
+    upper_bound = E
 
     rhs = 0
     for n in range(1, N-S+1):
@@ -169,7 +173,7 @@ def load_data(data_set):
     if data_set == "BCI":
         filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/dynaMETE_Input_BCI.csv'
         scaling_component = 1e11
-        coefficients = [0, 1.221527, -0.001567, -0.020493] # TODO: change these
+        coefficients = [0, 0.960706, 0.000025, -0.019507]
 
     elif data_set == "birds":
         filename = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BioTIME/dynaMETE_Input_39.csv'
@@ -181,13 +185,14 @@ def load_data(data_set):
     return df, scaling_component, coefficients
 
 
-def plot_rank_SAD(S, N, lambdas, coefficients, empirical_sad, data_set, census):
+def plot_rank_SAD(state_variables, lambdas, coefficients, empirical_sad, data_set, census):
+    S, N, E, dN = state_variables
     l1, l2, l3 = lambdas
 
     meteSAD = []
     Z = partition_function(lambdas, state_variables, coefficients)
     # upper_bound = min((-np.log(0.1) + l1) / l2, E)
-    upper_bound = 100
+    upper_bound = E
     for n in range(1, N-S+1):
         p_n = quad(lambda e: np.exp(R_exponent(n, e, optimized_lambdas, coefficients)), 1, E, points=[1, upper_bound])[0]
         p_n = p_n / Z
@@ -295,14 +300,16 @@ def perform_optimization(lambdas, coefficients, state_variables, scaling_compone
         {'type': 'eq', 'fun': constraint_2, 'args': (state_variables,coefficients)},
         {'type': 'eq', 'fun': dynamic_constraint, 'args': (state_variables,coefficients)}
     ]
-    boundaries = ((1/N, N/S * scaling_component),
-                  (1/N, N/S * scaling_component),
-                  (0, N/S * scaling_component))
+    boundaries = ((0, N/S * scaling_component),
+                  (0, N/S * scaling_component),
+                  (-N/S * scaling_component, N/S * scaling_component))
 
     result = minimize(squared_error, lambdas,
-                      args=(state_variables,coefficients),
+                      args=(state_variables,coefficients,scaling_component),
+                      options={'maxiter':1000, 'disp': True},
                       constraints=constraints,
-                      bounds=boundaries)
+                      bounds=boundaries,
+                      tol=1e-10)
     optimized_lambdas = result.x
 
     clear_output(wait=False)
@@ -325,7 +332,7 @@ if __name__ == '__main__':
 
         # Determine starting lambdas
         initial_lambdas = make_initial_guess(state_variables, scaling_component)
-        check_constraints(initial_lambdas, state_variables, coefficients)
+        check_constraints([i/scaling_component for i in initial_lambdas], state_variables, coefficients)
 
 
         # Run the optimization
@@ -334,4 +341,7 @@ if __name__ == '__main__':
 
 
         # Plot rank SADs
-        plot_rank_SAD(S, N, optimized_lambdas, coefficients, empirical_sad, data_set, census)
+        plot_rank_SAD(state_variables, optimized_lambdas, coefficients, empirical_sad, data_set, census)
+
+        # TODO:
+        #  Does lambda_3 have to be positive? Do lambda 1 and 2?

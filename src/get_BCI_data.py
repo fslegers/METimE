@@ -20,7 +20,7 @@ if __name__ == "__main__":
 
 
     # Take average of 'DBH' for duplicates
-    df = df.groupby([col for col in df.columns if col != 'DBH'], as_index=False).agg({'DBH': 'mean'})
+    df = df.groupby([col for col in df.columns if col not in ['DBH', 'StemID']], as_index=False).agg({'DBH': 'mean'})
 
 
     # Calculate Metabolic Rate as in "A strong test for Maximum Entropy Theory of Ecology, Xiao, 2015"

@@ -227,8 +227,8 @@ def plot_rank_SAD(S, N, lambdas, empirical_sad, data_set, census):
 
 if __name__ == '__main__':
 
-    data_set = "BCI"
-    #data_set = "birds"
+    #data_set = "BCI"
+    data_set = "birds"
 
     df, scaling_component = load_data(data_set)
 
@@ -257,4 +257,4 @@ if __name__ == '__main__':
 
 
         # Plot rank SADs
-        # plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
+        plot_rank_SAD(S, N, optimized_lambdas, empirical_sad, data_set, census)
