@@ -182,8 +182,8 @@ def do_regression(df):
 
 
 if __name__ == "__main__":
-    #data_set = 'birds'
-    data_set = 'BCI'
+    data_set = 'birds'
+    #data_set = 'BCI'
     df = load_data(data_set)
 
     df = set_up_library(df, lib=['C', 'n', 'ne', 'e'])
@@ -191,7 +191,6 @@ if __name__ == "__main__":
 
     # TODO: save coefficients
     # TODO: include test set
-
 
     # NOTES:
     # For the BCI data set, we don't have e_t per species, but per individual. So the data that goes into the

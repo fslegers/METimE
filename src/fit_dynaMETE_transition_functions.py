@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from pyexpat import model
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import Ridge, LinearRegression
+import src.METE_no_integrals as mete
 
 
 def load_data(data_set):
@@ -85,16 +86,35 @@ def load_data(data_set):
         df['n_t'] = df.groupby(['PlotCensusNumber', 'SpeciesID'])['TreeID'].transform('nunique')
         df.rename(columns={'SpeciesID': 'species', 'PlotCensusNumber': 'census', 'Metabolic_Rate': 'e_t'}, inplace=True)
 
+        # Compute METE for each time step
+        # and add lambda_1 and lambda_2 values to df
+        df_METE, scaling_component = mete.load_data('BCI')
+        df_METE['l1'] = 0
+        df_METE['l2'] = 0
+
+        for row in df_METE.itertuples(index=False):
+            state_variables, census, _ = mete.fetch_census_data(df_METE, row.Index)
+            S, N, E = state_variables
+
+            # Compute the theoretical guess for l1 and l2
+            theoretical_guess = mete.make_initial_guess(state_variables, scaling_component)
+
+            # Perform optimization to find l1 and l2
+            l1, l2 = mete.perform_optimization([theoretical_guess], state_variables, scaling_component)
+
+            # Scale results and add to dataframe
+            df_METE.at[row.Index, 'l1'] = l1 / scaling_component
+            df_METE[row, 'l2'] = l2 / scaling_component
+
 
         # Add the values of n at the next year
-        df_next = df.copy()
-        df_next['census'] = df_next['census'] - 1
-        df_next.rename(columns={'n_t': 'n_t+1'}, inplace=True)
-        df_next = df_next[['species', 'census', 'TreeID', 'n_t+1']]
-        df = df.merge(df_next, how='left', on=['species', 'census', 'TreeID'])
-        df = df.drop(['TreeID'], axis=1)
+        df['n_t+1'] = df['n_t'].shift(-1)
         df = df.dropna()
+        df = df.drop(['TreeID'], axis=1)
 
+
+        # add l1 and l2
+        df = df.merge(df_METE[['census', 'l1', 'l2']], how='left', on='census')
 
     return df
 
@@ -255,6 +275,7 @@ def do_regression(df):
 
 if __name__ == "__main__":
     data_set = 'BCI'
+
     df = load_data(data_set)
 
     df = add_f_to_df(df)
