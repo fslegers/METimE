@@ -93,6 +93,8 @@ def check_constraints(initial_lambdas, state_variables, scaling_component=100):
 
 def perform_optimization(guesses, state_variables, scaling_component=100):
     #objective_function = lambda x, state_variables: sum(np.pow(calc_constraints_errors(x, state_variables, scaling_component), [2,2]))
+    _, N, E = state_variables
+
     objective_function = lambda x, state_variables: (
             (calc_constraints_errors(x, state_variables, scaling_component)[0] * max(1, math.floor(math.log10(E/N))))**2 +
             (calc_constraints_errors(x, state_variables, scaling_component)[1])**2)
@@ -137,7 +139,7 @@ def load_data(data_set):
     return df, scaling_component
 
 
-def fetch_census_data(df, row):
+def fetch_census_data(df, row, data_set):
     """
     A function that fetches the census data from a given data set and census/row.
     :param df: data set (bird or BCI data)
