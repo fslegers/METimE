@@ -1,96 +1,6 @@
 import pandas as pd
 import numpy as np
 
-
-# def load_BCI():
-#
-#     path = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/FullMeasurementBCI.tsv'
-#     df = pd.read_csv(path, sep='\t', low_memory=False)
-#
-#     df = df[df['Status'] == "alive"] # filter out dead and stem-dead trees
-#     df = df.drop(
-#         ["Mnemonic", "Subspecies", "SubspeciesID", "StemTag", "HOM", "HighHOM", "ListOfTSM", "Date", "ExactDate",
-#          "Status", "QuadratName", "QuadratID", 'PX', 'PY'], axis=1)
-#     df = df.dropna()
-#
-#
-#     # Take average of 'DBH' for duplicates
-#     df = df.groupby([col for col in df.columns if col not in ['DBH', 'StemID']], as_index=False).agg({'DBH': 'mean'})
-#
-#
-#     # Calculate Metabolic Rate as in "A strong test for Maximum Entropy Theory of Ecology, Xiao, 2015"
-#     min_DBH = min(df['DBH'])
-#     df['Metabolic_Rate'] = (df['DBH'] / min_DBH) ** 2
-#
-#
-#     # Select columns
-#     df = df.copy()[['SpeciesID', 'TreeID', 'PlotCensusNumber', 'Metabolic_Rate']]
-#
-#
-#     # Add State Variables to df
-#     df['S'] = df.groupby(['PlotCensusNumber'])['SpeciesID'].transform('nunique')
-#     df['S'] = np.ceil(df['S'])
-#     df['N'] = df.groupby(['PlotCensusNumber'])['TreeID'].transform('nunique')
-#     df['N'] = np.ceil(df['N'])
-#     df['E'] = df.groupby(['PlotCensusNumber'])['Metabolic_Rate'].transform('sum')
-#
-#
-#     # Add population sizes to df
-#     df['n'] = df.groupby(['PlotCensusNumber', 'SpeciesID'])['TreeID'].transform('nunique')
-#     df.rename(columns={'SpeciesID': 'species', 'PlotCensusNumber': 'census', 'Metabolic_Rate': 'e'}, inplace=True)
-#
-#
-#     # Compute METE for each time step
-#     # and add lambda_1 and lambda_2 values to df
-#     df_METE, scaling_component = mete.load_data('BCI')
-#     df_METE['l1'] = 0.0
-#     df_METE['l2'] = 0.0
-#
-#
-#     for row in df_METE.itertuples(index=True):
-#         state_variables, census, _ = mete.fetch_census_data(df_METE, row.Index, data_set="BCI")
-#         S, N, E = state_variables
-#
-#         # Compute the theoretical guess for l1 and l2
-#         theoretical_guess = mete.make_initial_guess(state_variables, scaling_component)
-#
-#         # Perform optimization to find l1 and l2
-#         l1, l2 = mete.perform_optimization([theoretical_guess], state_variables, scaling_component)
-#
-#         # Scale results and add to dataframe
-#         df_METE.at[row.Index, 'l1'] = l1 / scaling_component
-#         df_METE[row, 'l2'] = l2 / scaling_component
-#
-#
-#     # Calculate beta
-#     df_METE['beta'] = df_METE['l1'] + df_METE['l2']
-#     df_METE.rename(columns={'PlotCensusNumber': 'census'}, inplace=True)
-#
-#
-#     # Calculate average metabolic rates per species
-#     df['m'] = df.groupby(['census', 'species'])['e'].transform('mean') # TODO: check if this makes sense
-#
-#
-#     # Add the values of n, e, S, m at the next year
-#     df['n_t+1'] = df['n'].shift(-1)
-#     df['S_t+1'] = df['S'].shift(-1)
-#     df['m_t+1'] = df['m'].shift(-1)
-#     df = df.dropna()
-#
-#
-#     # Add estimates of derivatives
-#     df['dn'] = df['n_t+1'] - df['n']
-#     df['dm'] = df['m_t+1'] - df['m']
-#     df['ds'] = df['S_t+1'] - df['S']
-#
-#
-#     df = df.drop(labels=['TreeID', 'm', 'n_t+1', 'm_t+1', 'S_t+1'], axis=1)
-#     df = df.merge(df_METE[['census', 'beta']], how='left', on='census')
-#
-#
-#     df.to_csv('C:/Users/5605407/Documents/PhD/Chapter_2/PythonProjects/METimE/data/BCI_input_dynaMETE.csv',
-#               index=False)
-
 def load_fish():
 
     # Load fish population data
@@ -98,13 +8,13 @@ def load_fish():
 
     # Add State Variables to df
     df_mete = pd.DataFrame()
-    df_mete['S_t'] = np.ceil(df_abundance[df_abundance['ABUNDANCE'] > 1]
+    df_mete['S_t'] = np.ceil(df_abundance[df_abundance['ABUNDANCE'] > 0]
                              .groupby(['YEAR'])['GENUS_SPECIES']
                              .nunique()
                              ).reset_index(drop=True)
     df_mete['next_S'] = df_mete['S_t'].shift(-1)
     df_mete['N_t'] = np.ceil(df_abundance.groupby(['YEAR'])['ABUNDANCE'].sum()).reset_index(drop=True)
-    df_mete['next_N'] = df_mete['S_t'].shift(-1)
+    df_mete['next_N'] = df_mete['N_t'].shift(-1)
     df_mete['YEAR'] = df_abundance.groupby(['YEAR']).sum().index
     df_mete.rename(columns={'YEAR': 'census'}, inplace=True)
 
@@ -134,10 +44,65 @@ def load_fish():
     df_dyna.to_csv('../../data/fish_regression_library.csv', index=False)
 
     df_METimE = pd.DataFrame()
-    df_METimE['N/S'] = df_dyna['N_t']/df_dyna['S_t']
-    df_METimE['dN/S'] = df_dyna['dN'] / df_dyna['S_t']
-    df_METimE['dS'] = df_dyna['dS']
+    df_METimE['S'] = df_mete['S_t']
+    df_METimE['N'] = df_mete['N_t']
+    df_METimE['census'] = df_mete['census']
+    df_METimE['N/S'] = df_mete['N_t']/df_mete['S_t']
+    df_METimE['dN/S'] = (df_mete['next_N'] - df_mete['N_t']) / df_mete['S_t']
+    df_METimE['dS'] = df_mete['next_S'] - df_mete['S_t']
+
+    # Save empirical SADs
+    df_SAD_dict = {}
+    grouped = df_abundance.groupby(["YEAR"], sort=True)
+
+    for year, group in grouped:
+        sad_year = []
+
+        # Count species abundances
+        abundance_counts = group.groupby("GENUS_SPECIES")["ABUNDANCE"].sum()
+
+        # Determine max abundance (S)
+        S = group["GENUS_SPECIES"].nunique()
+        N = int(group["ABUNDANCE"].sum())
+
+        # Compute species count for each n
+        species_count = abundance_counts.value_counts().to_dict()
+
+        # Compute relative abundance for each n
+        for n in range(1, N - S + 1):
+            relative_abundance = species_count.get(n, 0)
+            sad_year.append(relative_abundance)
+
+        df_SAD_dict[year] = sad_year
+
+    df_SAD = pd.DataFrame({
+        "census": [year if isinstance(year, int) else year[0] for year in df_SAD_dict.keys()],  # Extract integer years
+        "SAD": list(df_SAD_dict.values())  # Ensure SAD lists are properly stored
+    })
+
+    df_rank_dict = {}
+    for year, group in grouped:
+        # Count species abundances
+        abundance_counts = group.groupby("GENUS_SPECIES")["ABUNDANCE"].sum()
+
+        # Sort species by abundance (high to low)
+        sorted_abundances = abundance_counts.sort_values(ascending=False).tolist()
+
+        # Store in dictionary
+        df_rank_dict[year] = [i for i in sorted_abundances if i > 0]
+
+    df_rank = pd.DataFrame({
+        "census": [year if isinstance(year, int) else year[0] for year in df_rank_dict.keys()],
+        "rank_SAD": list(df_rank_dict.values())
+    })
+
+    # Merge explicitly on "census" to ensure alignment
+    df_METimE = df_METimE.merge(df_SAD, on="census", how="left")
+    df_METimE = df_METimE.merge(df_rank, on="census", how="left")
+
+    # Save the final dataframe
     df_METimE.to_csv('../../data/fish_METimE_values.csv', index=False)
+
 
 def load_birds():
 
@@ -257,11 +222,65 @@ def load_birds():
     df_dyna.to_csv('../../data/birds_regression_library.csv', index=False)
 
     df_METimE = pd.DataFrame()
+    df_METimE['census'] = df_mete['census']
+    df_METimE['S'] = df_mete['S_t']
+    df_METimE['N'] = df_mete['N_t']
+    df_METimE['E'] = df_mete['E_t']
     df_METimE['N/S'] = df_dyna['N_t']/df_dyna['S_t']
     df_METimE['E/S'] = df_dyna['E_t'] / df_dyna['S_t']
     df_METimE['dN/S'] = df_dyna['dN'] / df_dyna['S_t']
     df_METimE['dE/S'] = df_dyna['dE'] / df_dyna['S_t']
     df_METimE['dS'] = df_dyna['dS']
+
+    # Save empirical SADs
+    df_SAD_dict = {}
+    grouped = df_abundance.groupby(["YEAR"], sort=True)
+
+    for year, group in grouped:
+        sad_year = []
+
+        # Count species abundances
+        abundance_counts = group.groupby("GENUS_SPECIES")["ABUNDANCE"].sum()
+
+        # Determine max abundance (S)
+        S = group["GENUS_SPECIES"].nunique()
+        N = int(group["ABUNDANCE"].sum())
+
+        # Compute species count for each n
+        species_count = abundance_counts.value_counts().to_dict()
+
+        for n in range(1, N - S + 1):
+            abundance = species_count.get(n, 0)
+            sad_year.append(abundance)
+
+        df_SAD_dict[year] = sad_year  # Store SAD with YEAR as key
+
+    df_SAD = pd.DataFrame({
+        "census": [year if isinstance(year, int) else year[0] for year in df_SAD_dict.keys()],  # Extract integer years
+        "SAD": list(df_SAD_dict.values())  # Ensure SAD lists are properly stored
+    })
+
+    df_rank_dict = {}
+    for year, group in grouped:
+        # Count species abundances
+        abundance_counts = group.groupby("GENUS_SPECIES")["ABUNDANCE"].sum()
+
+        # Sort species by abundance (high to low)
+        sorted_abundances = abundance_counts.sort_values(ascending=False).tolist()
+
+        # Store in dictionary
+        df_rank_dict[year] = [i for i in sorted_abundances if i > 0]
+
+    df_rank = pd.DataFrame({
+        "census": [year if isinstance(year, int) else year[0] for year in df_rank_dict.keys()],
+        "rank_SAD": list(df_rank_dict.values())
+    })
+
+    # Merge explicitly on "census" to ensure alignment
+    df_METimE = df_METimE.merge(df_SAD, on="census", how="left")
+    df_METimE = df_METimE.merge(df_rank, on="census", how="left")
+
+    # Save the final dataframe
     df_METimE.to_csv('../../data/birds_METimE_values.csv', index=False)
 
 def load_BCI():
@@ -329,11 +348,67 @@ def load_BCI():
     df.to_csv('../../data/BCI_regression_library.csv', index=False)
 
     df_METimE = pd.DataFrame()
+    df_METimE['census'] = df['census']
+    df_METimE['S'] = df['S_t']
+    df_METimE['N'] = df['N_t']
+    df_METimE['E'] = df['E_t']
     df_METimE['N/S'] = df['N_t']/df['S_t']
     df_METimE['E/S'] = df['E_t'] / df['S_t']
     df_METimE['dN/S'] = df['dN'] / df['S_t']
     df_METimE['dE/S'] = df['dE'] / df['S_t']
     df_METimE['dS'] = df['dS']
+
+    df_METimE = df_METimE.drop_duplicates()
+
+    # Save empirical SADs
+    df_SAD_dict = {}
+    df_rank_dict = {}
+    grouped = df.groupby(["census"], sort=True)
+
+    for year, group in grouped:
+        sad_year = []
+        rank_year = []
+
+        # Remove duplicate rows (for multiple treeIDs)
+        group = group.drop(columns=['TreeID', 'e', 'de'], errors='ignore').drop_duplicates()
+
+        # Count species abundances
+        abundance_counts = group.groupby("species")["n"].sum()
+
+        # Determine max abundance (S)
+        S = group["species"].nunique()
+        N = int(group["n"].sum())
+
+        # Compute species count for each n
+        species_count = abundance_counts.value_counts().to_dict()
+
+        for n in range(1, N - S + 1):
+            abundance = species_count.get(n, 0)
+            sad_year.append(abundance)
+
+        for n in range(N - S, 0, -1):
+            count = species_count.get(n, 0)
+            for i in range(count):
+                rank_year.append(n)
+
+        df_SAD_dict[year] = sad_year
+        df_rank_dict[year] = rank_year
+
+    df_SAD = pd.DataFrame({
+        "census": [year if isinstance(year, int) else year[0] for year in df_SAD_dict.keys()],  # Extract integer years
+        "SAD": list(df_SAD_dict.values())  # Ensure SAD lists are properly stored
+    })
+
+    df_rank = pd.DataFrame({
+        "census": [year if isinstance(year, int) else year[0] for year in df_rank_dict.keys()],
+        "rank_SAD": list(df_rank_dict.values())
+    })
+
+    # Merge explicitly on "census" to ensure alignment
+    df_METimE = df_METimE.merge(df_SAD, on="census", how="left")
+    df_METimE = df_METimE.merge(df_rank, on="census", how="left")
+
+    # Save the final dataframe
     df_METimE.to_csv('../../data/BCI_METimE_values.csv', index=False)
 
 
@@ -382,8 +457,8 @@ def add_missing_rows(df):
 
 
 if __name__ == '__main__':
-    load_fish()
-    load_birds()
+    #load_fish()
+    #load_birds()
     load_BCI()
 
 
