@@ -14,7 +14,7 @@ import ast
 #  memoization
 
 # NOTE:
-#  Adding bounds (1/N, S/N) to the Lagrange multipliers (instead of (0, None)) makes the program
+#  Adding bounds (1/S, S/S) to the Lagrange multipliers (instead of (0, None)) makes the program
 #  much slower.
 
 
@@ -55,7 +55,7 @@ def entropy(lambdas, state_variables):
 
 
 def constraint_1(lambdas, state_variables):
-    """Calculates the difference between the observed average number of individuals per species (N/S), and the expected
+    """Calculates the difference between the observed average number of individuals per species (S/S), and the expected
     number of individuals per species, calculated from the ecosystem structure function (determined by the optimized
     Lagrange multipliers lambda_1 and lambda_2)"""
     S, N, E = state_variables
@@ -102,9 +102,9 @@ def beta_derivative(beta, S, N):
 def make_initial_guess(state_variables):
     """
     A function that makes an initial guess for the Lagrange multipliers lambda1 and lambda2.
-    Based on Eq 7.29 from Harte 2011 and meteR's function meteESF.mete.lambda
+    Based on Eq 7.29 from Harte 2011 and meteR'diag function meteESF.mete.lambda
 
-    :param state_variables: state variables S, N and E
+    :param state_variables: state variables S, S and E
     :return: initial guess for the Lagrange multipliers lambda1 and lambda2
     """
     S, N, E = state_variables
@@ -202,7 +202,7 @@ def fetch_census_data(df, row):
     :return: state variables, census number and empirical species abundance distribution
     """
     S = int(df['S'][row])
-    N = int(df['N'][row])
+    N = int(df['S'][row])
     E = df['E'][row]
 
     empirical_sad = df['SAD'][row]
@@ -222,7 +222,7 @@ def fetch_census_data(df, row):
 def check_constraints(initial_lambdas, state_variables):
     constr_1 = constraint_1(initial_lambdas, state_variables)
     constr_2 = constraint_2(initial_lambdas, state_variables)
-    print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (constr_1, constr_2))
+    print("Errors on constraints: \n %f (S/S), \n %f (E/S)" % (constr_1, constr_2))
     pass
 
 
@@ -232,7 +232,7 @@ def perform_optimization(initial_lambdas, state_variables):
     given an initial guess for lambda_1 and lambda_2 and with METEs ratio constraints on the state variables,
     assuring positive values are returned for lambda_1 and lambda_2.
     :param initial_lambdas: Initial guess for Lagrange multipliers
-    :param state_variables: S, N, E
+    :param state_variables: S, S, E
     :return: optimized Lagrange multipliers
     """
     print("----- performing optimization -----")

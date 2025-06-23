@@ -10,7 +10,6 @@ def calculate_SAD(group):
 
 
 if __name__ == "__main__":
-
     path = 'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/FullMeasurementBCI.tsv'
     df = pd.read_csv(path, sep='\t', low_memory=False)
 
@@ -18,17 +17,14 @@ if __name__ == "__main__":
     df = df.drop(["Mnemonic", "Subspecies", "SubspeciesID", "StemTag", "HOM", "HighHOM", "ListOfTSM", "Date", "ExactDate", "Status", "QuadratName", "QuadratID", 'PX', 'PY'], axis = 1)
     df = df.dropna()
 
-
     # Take average of 'DBH' for duplicates
     df = df.groupby([col for col in df.columns if col not in ['DBH', 'StemID']], as_index=False).agg({'DBH': 'mean'})
-
 
     # Calculate Metabolic Rate as in "A strong test for Maximum Entropy Theory of Ecology, Xiao, 2015"
     min_DBH = min(df['DBH'])
     df['MetabolicRate'] = (df['DBH'] / min_DBH)**2
 
-
-    # Calculate METE's state variables
+    # Calculate METE'diag state variables
     df_METE = (
         df.groupby(['PlotCensusNumber'])
         .agg(
@@ -55,13 +51,13 @@ if __name__ == "__main__":
     df_METE.to_csv(filename, index=False)
 
     # Add derivatives of state variables
-    df_METE['next_N'] = df_METE['N'].shift(-1)
+    df_METE['next_N'] = df_METE['S'].shift(-1)
     df_METE['next_S'] = df_METE['S'].shift(-1)
     df_METE['next_E'] = df_METE['E'].shift(-1)
 
     df_METE.dropna()
 
-    df_METE['dN'] = df_METE['next_N'] - df_METE['N']
+    df_METE['dN'] = df_METE['next_N'] - df_METE['S']
     df_METE['dS'] = df_METE['next_S'] - df_METE['S']
     df_METE['dE'] = df_METE['next_E'] - df_METE['E']
 

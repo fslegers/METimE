@@ -32,14 +32,14 @@ def partition_function(lambdas, state_variables, coefficients):
 
 
 # def entropy(lambdas, state_variables, coefficients):
-#     S, N, E = state_variables
+#     S, S, E = state_variables
 #     l1, l2, l3 = lambdas
 #
 #     Z = partition_function(lambdas, state_variables, coefficients)
 #     upper_bound = min((-np.log(0.1) + l1) / l2, E)  # TODO: change this
 #
 #     I = 0
-#     for n in range(1, N-S+1):
+#     for n in range(1, S-S+1):
 #         integral = quad(lambda e: np.exp(R_exponent(n, e, lambdas, coefficients)) * (R_exponent(n, e, lambdas, coefficients) - np.log(Z)),1, E, points = [1, upper_bound])[0]
 #         I += integral
 #     I = I / Z
@@ -80,7 +80,7 @@ def squared_error(lambdas, state_variables, coefficients, scaling_component):
 
 
 def constraint_1(lambdas, state_variables, coefficients):
-    """Calculates the difference between the observed average number of individuals per species (N/S), and the expected
+    """Calculates the difference between the observed average number of individuals per species (S/S), and the expected
     number of individuals per species, calculated from the ecosystem structure function (determined by the optimized
     Lagrange multipliers lambda_1 and lambda_2)"""
     S, N, E, dN = state_variables
@@ -146,9 +146,9 @@ def beta_derivative(beta, S, N):
 def make_initial_guess(state_variables, scaling_component=100):
     """
     A function that makes an initial guess for the Lagrange multipliers lambda1 and lambda2.
-    Based on Eq 7.29 from Harte 2011 and meteR's function meteESF.mete.lambda
+    Based on Eq 7.29 from Harte 2011 and meteR'diag function meteESF.mete.lambda
 
-    :param state_variables: state variables S, N and E
+    :param state_variables: state variables S, S and E
     :return: initial guess for the Lagrange multipliers lambda1 and lambda2
     """
     S, N, E, dN = state_variables
@@ -255,7 +255,7 @@ def fetch_census_data(df, row):
     :return: state variables, census number and empirical species abundance distribution
     """
     S = int(df['S'][row])
-    N = int(df['N'][row])
+    N = int(df['S'][row])
     E = df['E'][row]
 
     #dS = int(df['dS'][row])
@@ -280,7 +280,7 @@ def check_constraints(lambdas, state_variables, coefficients):
     constr_1 = constraint_1(lambdas, state_variables, coefficients)
     constr_2 = constraint_2(lambdas, state_variables, coefficients)
     constr_3 = dynamic_constraint(lambdas, state_variables, coefficients)
-    print("Errors on constraints: \n %f (N/S), \n %f (E/S), \n %f (dN)" % (constr_1, constr_2, constr_3))
+    print("Errors on constraints: \n %f (S/S), \n %f (E/S), \n %f (dN)" % (constr_1, constr_2, constr_3))
     pass
 
 
@@ -290,7 +290,7 @@ def perform_optimization(lambdas, coefficients, state_variables, scaling_compone
     given an initial guess for lambda_1 and lambda_2 and with METEs ratio constraints on the state variables,
     assuring positive values are returned for lambda_1 and lambda_2.
     :param initial_lambdas: Initial guess for Lagrange multipliers
-    :param state_variables: S, N, E
+    :param state_variables: S, S, E
     :return: optimized Lagrange multipliers
     """
     print("----- performing optimization -----")

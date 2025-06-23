@@ -6,8 +6,8 @@ from scipy.integrate import quad
 
 def dn_dt(n, e, state_variables):
     _, N, _ = state_variables
-    # return (1.48 * n -0.0002 * e -2.04e-05*n*e -33.6 * n/N) # LinearRegression
-    # return 1.225 * n - 0.00017 * e -1.58e-05*n*e -2.28 * n/N # RidgeRegression
+    # return (1.48 * n -0.0002 * e -2.04e-05*n*e -33.6 * n/S) # LinearRegression
+    # return 1.225 * n - 0.00017 * e -1.58e-05*n*e -2.28 * n/S # RidgeRegression
     return 1.223 * n - 1.266 * e - 0.122 * n * e - 2.27 * n / N  # RidgeRegression with e -> e/7692
 
 

@@ -20,11 +20,11 @@ def partition_function(lambdas, state_variables):
 
 def calc_constraints_errors(lambdas, state_variables, scaling_component = 100):
     """
-    Calculates the differences between the empirical and expected constraints (N/S and E/S). The expected values are
+    Calculates the differences between the empirical and expected constraints (S/S and E/S). The expected values are
     computed by evaluating the partial derivatives of log(Z) with respect to Lagrange multipliers lambda_1 and lambda_2.    to
     :param lambdas: vector of Lagrange multipliers
-    :param state_variables: vector of S, N and E
-    :return: a vector of differences between (a) the partial derivative of log(Z) with respect to lambda_1 and N/S and
+    :param state_variables: vector of S, S and E
+    :return: a vector of differences between (a) the partial derivative of log(Z) with respect to lambda_1 and S/S and
      (b) the partial derivative of log(Z) with respect to lambda_2 and E/S
     """
     S, N, E = state_variables
@@ -49,9 +49,9 @@ def calc_constraints_errors(lambdas, state_variables, scaling_component = 100):
 def make_initial_guess(state_variables, scaling_component=100):
     """
     A function that makes an initial guess for the Lagrange multipliers lambda1 and lambda2.
-    Based on Eq 7.29 from Harte 2011 and meteR's function meteESF.mete.lambda
+    Based on Eq 7.29 from Harte 2011 and meteR'diag function meteESF.mete.lambda
 
-    :param state_variables: state variables S, N and E
+    :param state_variables: state variables S, S and E
     :return: initial guess for the Lagrange multipliers lambda1 and lambda2
     """
     S, N, E = state_variables
@@ -87,7 +87,7 @@ def beta_derivative(beta, S, N):
 
 def check_constraints(initial_lambdas, state_variables, scaling_component=100):
     errors = calc_constraints_errors(initial_lambdas, state_variables, scaling_component)
-    print("Errors on constraints: \n %f (N/S), \n %f (E/S)" % (errors[0], errors[1]))
+    print("Errors on constraints: \n %f (S/S), \n %f (E/S)" % (errors[0], errors[1]))
     pass
 
 
@@ -113,7 +113,7 @@ def perform_optimization(guesses, state_variables, scaling_component=100):
         sol = minimize(objective_function, initial_guess,
                            args=(state_variables,),
                            method='SLSQP',
-                           options={'eps': 1e-11, 'disp':True},
+                           options={'eps': 1e-11, 'disp':False},
                            constraints=constraints,
                            tol=1e-11)
 
@@ -150,7 +150,7 @@ def fetch_census_data(df, row, data_set):
     :return: state variables, census number and empirical species abundance distribution
     """
     S = int(df['S'][row])
-    N = int(df['N'][row])
+    N = int(df['S'][row])
     E = df['E'][row]
 
     empirical_sad = df['SAD'][row]
