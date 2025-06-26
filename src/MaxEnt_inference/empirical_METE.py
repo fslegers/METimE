@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 from concurrent.futures import ProcessPoolExecutor
 
 import warnings
-#warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore")
 
 """
 Entropy Maximization Script
@@ -91,18 +91,18 @@ def integrate_with_cutoff(X, functions, lambdas):
 ###              Initial Guess              ###
 ###############################################
 
-def compute_entropy_contribution(n, e_max, Z, X, functions, lambdas, scaling):
+def compute_entropy_contribution(n, e_max, Z, X, functions, lambdas):
+    log_Z = np.log(Z)
+    edges = np.linspace(0, e_max, 6)
+
     def integrand(e):
         rexp = exp_in_R(n, e, X, functions, lambdas)
-        return np.exp(rexp) * (rexp - np.log(Z))
+        return np.exp(rexp) * (rexp - log_Z)
 
-    edges = np.linspace(0, e_max, 6)
-    return sum(
-        quad(integrand, a, b)[0]
-        for a, b in zip(edges[:-1], edges[1:])
-    )
+    results = [quad(integrand, a, b)[0] for a, b in zip(edges[:-1], edges[1:])]
+    return np.sum(results)
 
-def entropy(lambdas, functions, X, scaling=False):
+def entropy(lambdas, functions, X):
     """
     Compute Shannon entropy for the given lambdas and functions.
     Parallelized version.
@@ -116,13 +116,13 @@ def entropy(lambdas, functions, X, scaling=False):
         futures = [
             executor.submit(
                 compute_entropy_contribution,
-                n, (np.log(1000) - lambdas[0] * n) / (lambdas[1] * n), Z, X, functions, lambdas, scaling
+                n, (np.log(1000) - lambdas[0] * n) / (lambdas[1] * n), Z, X, functions, lambdas
             )
             for n in range(1, n_max)
         ]
-        contributions = [f.result() for f in futures]
+        contributions = np.fromiter((f.result() for f in futures), dtype=np.float64)
 
-    I = sum(contributions) / Z
+    I = contributions.sum() / Z
 
     if np.any(np.isnan(I)) or np.any(np.isinf(I)):
         print("Invalid values detected in entropy")
@@ -224,7 +224,7 @@ def perform_optimization(lambdas, functions, macro_var, X):
                       method="trust-constr",
                       callback=my_callback,
                       options={'maxiter': 100,
-                               'gtol': 1e-5,
+                               'ftol': 1e-8,
                                'disp': True,
                                'verbose': 3
                                })
@@ -280,6 +280,7 @@ def check_constraints(lambdas, input, functions):
     }
 
     Z = integrate_with_cutoff(X, functions, lambdas)
+    print(f"Z = {Z}")
     # We checked that Z is off only 0.13% from the analytically calculated Z
 
     absolute_errors = []
@@ -319,70 +320,9 @@ def check_constraints(lambdas, input, functions):
 
     return absolute_errors
 
-# def check_constraints(lambdas, input, functions):
-#     """
-#     Returns the error on constraints given some lambda values
-#     Given in percentage of the observed value
-#     """
-#     S, N, E = (int(input['S_t'].drop_duplicates().iloc[0]),
-#                int(input['N_t'].drop_duplicates().iloc[0]),
-#                input['E_t'].drop_duplicates().iloc[0])
-#
-#     X = {
-#         'S_t': S,
-#         'N_t': N,
-#         'E_t': E
-#     }
-#
-#     macro_var = {
-#         'N/S': X['N_t'] / X['S_t'],
-#         'E/S': X['E_t'] / X['S_t']
-#     }
-#
-#     Z = integrate_with_cutoff(X, functions, lambdas)
-#
-#     def compute_integral_for_function(args):
-#         f, n, e_max = args
-#         edges = np.linspace(0, e_max, 6)
-#         return sum(
-#             quad(
-#                 lambda e: f(n, e, X) * np.exp(exp_in_R(n, e, X, functions, lambdas)),
-#                 a, b
-#             )[0]
-#             for a, b in zip(edges[:-1], edges[1:])
-#         )
-#
-#     n_max = int(max(4, -np.log(0.001) / lambdas[0]) + 1)
-#     absolute_errors = []
-#     percentage_errors = []
-#
-#     with ProcessPoolExecutor(max_workers=2) as executor:
-#         for f, (key, v) in zip(functions, macro_var.items()):
-#             # Prepare all tasks for this function
-#             tasks = [(f, n, (np.log(1000) - lambdas[0] * n) / (lambdas[1] * n))
-#                      for n in range(1, n_max)]
-#
-#             # Compute all integrals in parallel
-#             results = list(executor.map(compute_integral_for_function, tasks))
-#             integral_value = sum(results) / Z
-#
-#             # Compute errors
-#             abs_error = np.abs(integral_value - v)
-#             pct_error = abs_error / np.abs(v) * 100
-#             absolute_errors.append(abs_error)
-#             percentage_errors.append(pct_error)
-#
-#     print("\n Errors on constraints:")
-#     print(f"{'Constraint':<10} {'Abs Error':>15} {'% Error':>15}")
-#     print("-" * 42)
-#     for key, abs_err, pct_err in zip(macro_var.keys(), absolute_errors, percentage_errors):
-#         print(f"{key:<10} {abs_err:15.6f} {pct_err:15.2f}")
-#
-#     return absolute_errors
-
 
 if __name__ == "__main__":
-    input = pd.read_csv('../data/BCI_regression_library.csv')
+    input = pd.read_csv('../../data/BCI_regression_library.csv')
     functions = get_functions()
 
     for census in input['census'].unique():
@@ -399,8 +339,10 @@ if __name__ == "__main__":
 
         # Make initial guess                                                                                            # TODO: what does scaling do?
         initial_lambdas = make_initial_guess(X, scaling=False)                                                          # TODO: start from previous guess?
-        #initial_errors = check_constraints(initial_lambdas, input_census, functions)
+        initial_errors = check_constraints(initial_lambdas, input_census, functions)
+        print(f"Initial lambdas: {initial_lambdas}")
 
         # Perform optimization
         optimized_lambdas = perform_optimization(initial_lambdas, functions, macro_var, X)
         constraint_errors = check_constraints(optimized_lambdas, input_census, functions)
+        print(f"Optimized lambdas: {optimized_lambdas}")

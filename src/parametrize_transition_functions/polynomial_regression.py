@@ -16,7 +16,6 @@ def calculate_vif(X):
     vif_data['VIF'] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
     return vif_data
 
-
 def remove_high_vif_features(X, threshold=10.0):
     while True:
         vif = calculate_vif(X)
@@ -28,7 +27,6 @@ def remove_high_vif_features(X, threshold=10.0):
         else:
             break
     return X
-
 
 def do_polynomial_regression(df, target='dn', level='individuals', cluster='global'):
     if 'dn' not in df.columns and target == 'dn':
@@ -66,7 +64,7 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         feature_cols = feature_cols.drop(columns=['de', 'dS', 'dN', 'dE'])
 
     # Step 4: Compute polynomial features
-    poly = PolynomialFeatures(degree=3, include_bias=True)
+    poly = PolynomialFeatures(degree=2, include_bias=True)
     X_poly = poly.fit_transform(feature_cols)
     feature_names = poly.get_feature_names_out(feature_cols.columns)
     X = pd.DataFrame(X_poly, columns=feature_names, index=df.index)
@@ -82,6 +80,9 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         X.index = df.index
         y.index = df.index
 
+    # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
+    # cols_to_drop = [col for col in X.columns if 'e^' in col]
+    # X = X.drop(columns=cols_to_drop)
 
     # Step 5a: remove colinear features
     X = remove_high_vif_features(X)
@@ -99,8 +100,8 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
     coeff_df = pd.DataFrame({'Feature': model.feature_names_in_,
                             'Coefficient': model.coef_})
 
-    coeff_df.to_csv(f'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
-
+    coeff_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
+    print(coeff_df)
     return y, y_pred, species_ID, census\
 
 
@@ -176,7 +177,7 @@ def do_dynaMETE_regression(df, target='dn', level='individuals', cluster='global
     coeff_df = pd.DataFrame({'Feature': model.feature_names_in_,
                             'Coefficient': model.coef_})
 
-    coeff_df.to_csv(f'C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
+    coeff_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
 
     return y, y_pred, species_ID, census\
 
@@ -224,45 +225,12 @@ def plot_observed_vs_predicted(obs, pred, title, species=None):
     plt.ylabel("Predicted")
     plt.grid(True)
     plt.tight_layout()
-    #plt.show()
-    plt.savefig(f"C:/Users/5605407/Documents/PhD/Chapter_2/Results/BCI/Empirical_BCI_Poly_Regression_{title}.png")
+    plt.show()
+    #plt.savefig(f"C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/Empirical_BCI_Poly_Regression_{title}.png")
 
-# def k_means_clustering(df, ncluster):
-#     # Calculate dn
-#     n_df = df[['Species_ID', 't', 'n']].drop_duplicates()
-#     n_df = n_df.sort_values(['Species_ID', 't'])
-#     n_df['dn'] = n_df.groupby('Species_ID')['n'].shift(-1) - n_df['n']
-#
-#     # Compute summary stats per species
-#     summary = n_df.groupby('Species_ID')['dn'].agg(['mean', 'std', 'median']).reset_index()
-#
-#     # Flatten MultiIndex columns
-#     summary.columns = ['Species_ID'] + [f"{'dn'}_{stat}" for stat in ['mean', 'std', 'median']]
-#     summary.fillna(0, inplace=True)
-#
-#     # Step 3: Standardize the features
-#     X = summary.drop(columns='Species_ID')
-#     scaler = StandardScaler()
-#     X_scaled = scaler.fit_transform(X)
-#
-#     # Step 4: Run K-Means Clustering (choose 2 or 3 clusters)
-#     kmeans = KMeans(n_clusters=ncluster, random_state=42)
-#     summary['cluster'] = kmeans.fit_predict(X_scaled)
-#
-#     # Visualize clusters
-#     sns.scatterplot(data=summary, x='dn_mean', y='dn_std', hue='cluster', palette='viridis')
-#     plt.title('Species Clustering Based on Summary Stats')
-#     plt.xlabel('Mean dn')
-#     plt.ylabel('Std Dev dn')
-#     plt.show()
-#
-#     # Step 6: Merge cluster labels back to the original DataFrame
-#     df_with_clusters = df.merge(summary[['Species_ID', 'cluster']], on='Species_ID', how='left')
-#
-#     return df_with_clusters
 
 def add_clusters(df):
-    cluster_info = pd.read_csv("C:/Users/5605407/Documents/PhD/Chapter_2/Data sets/BCI/SpeciesID_to_Cluster.csv").drop_duplicates()
+    cluster_info = pd.read_csv("C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/SpeciesID_to_Cluster.csv").drop_duplicates()
     cluster_info.rename({'SpeciesID': 'Species_ID'}, axis=1, inplace=True)
     cluster_info = cluster_info[['Species_ID', 'Cluster']]
     df = df.merge(cluster_info, on='Species_ID', how='left')
@@ -303,7 +271,7 @@ if __name__ == '__main__':
 
         # All species together
         y_obs, y_pred, species_ID, census = do_polynomial_regression(df, target=target)
-        #plot_observed_vs_predicted(y_obs, y_pred, f"Global ({target})", species_ID)
+        plot_observed_vs_predicted(y_obs, y_pred, f"Global ({target})", species_ID)
 
         # # All species separately
         # all_obs, all_pred, all_species = [], [], []
@@ -315,14 +283,14 @@ if __name__ == '__main__':
         #     all_species.extend([species] * len(y_obs))
         # plot_observed_vs_predicted(all_obs, all_pred, f"Species-specific ({target})", species=all_species)
 
-        # Clusters
-        df = add_clusters(df)
-        all_obs, all_pred, all_clusters = [], [], []
-        for cluster in df['Cluster'].unique():
-            df_cluster = df[df['Cluster'] == cluster].drop(columns='Cluster')
-            y_obs, y_pred, _, _ = do_polynomial_regression(df_cluster, target=target, cluster=cluster)
-            all_obs.extend(y_obs)
-            all_pred.extend(y_pred)
-            all_clusters.extend([cluster] * len(y_obs))
-            plot_observed_vs_predicted(y_obs, y_pred, f"Clustered_{cluster} ({target})", species=[cluster] * len(y_obs))
-        #plot_observed_vs_predicted(all_obs, all_pred, f"Clustered ({target})", species=all_clusters)
+        # # Clusters
+        # df = add_clusters(df)
+        # all_obs, all_pred, all_clusters = [], [], []
+        # for cluster in df['Cluster'].unique():
+        #     df_cluster = df[df['Cluster'] == cluster].drop(columns='Cluster')
+        #     y_obs, y_pred, _, _ = do_polynomial_regression(df_cluster, target=target, cluster=cluster)
+        #     all_obs.extend(y_obs)
+        #     all_pred.extend(y_pred)
+        #     all_clusters.extend([cluster] * len(y_obs))
+        #     plot_observed_vs_predicted(y_obs, y_pred, f"Clustered_{cluster} ({target})", species=[cluster] * len(y_obs))
+        # plot_observed_vs_predicted(all_obs, all_pred, f"Clustered ({target})", species=all_clusters)
