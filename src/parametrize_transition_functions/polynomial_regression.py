@@ -81,8 +81,8 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         y.index = df.index
 
     # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
-    # cols_to_drop = [col for col in X.columns if 'e^' in col]
-    # X = X.drop(columns=cols_to_drop)
+    cols_to_drop = [col for col in X.columns if 'e^' in col]
+    X = X.drop(columns=cols_to_drop)
 
     # Step 5a: remove colinear features
     X = remove_high_vif_features(X)
@@ -269,9 +269,9 @@ if __name__ == '__main__':
         df = df.rename(columns={'species': 'Species_ID',
                                 'TreeID': 'Tree_ID'})
 
-        # All species together
-        y_obs, y_pred, species_ID, census = do_polynomial_regression(df, target=target)
-        plot_observed_vs_predicted(y_obs, y_pred, f"Global ({target})", species_ID)
+        # # All species together
+        # y_obs, y_pred, species_ID, census = do_polynomial_regression(df, target=target)
+        # plot_observed_vs_predicted(y_obs, y_pred, f"Global ({target})", species_ID)
 
         # # All species separately
         # all_obs, all_pred, all_species = [], [], []
@@ -283,14 +283,16 @@ if __name__ == '__main__':
         #     all_species.extend([species] * len(y_obs))
         # plot_observed_vs_predicted(all_obs, all_pred, f"Species-specific ({target})", species=all_species)
 
-        # # Clusters
-        # df = add_clusters(df)
-        # all_obs, all_pred, all_clusters = [], [], []
-        # for cluster in df['Cluster'].unique():
-        #     df_cluster = df[df['Cluster'] == cluster].drop(columns='Cluster')
-        #     y_obs, y_pred, _, _ = do_polynomial_regression(df_cluster, target=target, cluster=cluster)
-        #     all_obs.extend(y_obs)
-        #     all_pred.extend(y_pred)
-        #     all_clusters.extend([cluster] * len(y_obs))
-        #     plot_observed_vs_predicted(y_obs, y_pred, f"Clustered_{cluster} ({target})", species=[cluster] * len(y_obs))
-        # plot_observed_vs_predicted(all_obs, all_pred, f"Clustered ({target})", species=all_clusters)
+        # Clusters
+        df = add_clusters(df)
+        all_obs, all_pred, all_clusters = [], [], []
+        for cluster in df['Cluster'].unique():
+            df_cluster = df[df['Cluster'] == cluster].drop(columns='Cluster')
+            y_obs, y_pred, _, _ = do_polynomial_regression(df_cluster, target=target, cluster=cluster)
+            all_obs.extend(y_obs)
+            all_pred.extend(y_pred)
+            all_clusters.extend([cluster] * len(y_obs))
+            plot_observed_vs_predicted(y_obs, y_pred, f"Clustered_{cluster} ({target})", species=[cluster] * len(y_obs))
+        plot_observed_vs_predicted(all_obs, all_pred, f"Clustered ({target})", species=all_clusters)
+
+    # only having the first order of e doesn't give good results

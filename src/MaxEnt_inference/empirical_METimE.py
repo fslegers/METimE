@@ -67,6 +67,7 @@ def integrate_bin(n, a, b, lambdas, alphas, betas):
 
     if np.isinf(I):
         print("Warning: I may be invalid")
+        I = 9223372036854775807 # Maximum value
 
         # TODO: I is soms oneindig, dus de bounds voor lambdas[2] en lambas[3] zijn niet goed genoeg
 
@@ -159,6 +160,9 @@ def entropy(lambdas, functions, X, alphas, betas):
     Compute Shannon entropy for the given lambdas and functions.
     Parallelized version.
     """
+    if lambdas[3] < -2.8e-07 or lambdas[2] < -1.7e-05: # Workaround to prevent invalid calculations later on
+        return np.inf
+
     Z = integrate_with_cutoff(X, functions, lambdas)
 
     # Find the maximum of n for which we are doing calculations
@@ -271,7 +275,7 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
     } for f, name in zip(functions, macro_var)]
 
     # Set bounds                                                                                                        # TODO: why these bounds?
-    bounds = [(0, None), (0, None), (-8.18e-05, 2.49e-05), (-9.38e-08, 9.14e-07)] # these last two bounds should prevent overflow in exp()
+    bounds = [(0, None), (0, None), (-1.7e-05, 8e-05), (-2.8e-07, None)] # these last two bounds should prevent overflow in exp()
 
     # -l3 f(n, e) < 500
     # l3 > 500 / f_dn(n, e, X) for all n, e
@@ -291,6 +295,8 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
                       callback=my_callback,
                       options={'maxiter': 100,
                                'xtol': 1e-6,
+                               'gtol': 1e-9,
+                               'barrier_tol': 1e-12,
                                'disp': True,
                                'verbose': 3
                                })
@@ -472,8 +478,8 @@ if __name__ == "__main__":
 
         # Make initial guess
         initial_lambdas = make_initial_guess(X)
-        initial_errors = check_constraints(initial_lambdas, input_census, functions)
-        print(f"Initial lambdas: {initial_lambdas}")
+        #initial_errors = check_constraints(initial_lambdas, input_census, functions)
+        #print(f"Initial lambdas: {initial_lambdas}")
 
         # Perform optimization
         optimized_lambdas = perform_optimization(initial_lambdas, functions, macro_var, X, alphas, betas)

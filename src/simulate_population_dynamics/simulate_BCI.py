@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import fsolve
 from src.MaxEnt_inference import zero_point_METE
-from mpmath import log, exp
+#from mpmath import log, exp
 import seaborn as sns
 from scipy.integrate import odeint
 import sys
@@ -26,7 +26,7 @@ def g_wrapper(e, t, n, X, p):
 
 
 def partition_function_given_n(X, n, lambdas):
-    return (exp(-lambdas[0] * n) - exp(-lambdas[0] * n - X['E'] * lambdas[1] * n)) / (lambdas[1] * n)
+    return (np.exp(-lambdas[0] * n) - np.exp(-lambdas[0] * n - X['E'] * lambdas[1] * n)) / (lambdas[1] * n)
 
 
 def get_SAD(lambdas, X):
@@ -82,11 +82,11 @@ def sample_community(X):
     individuals = []
     for pop in populations:
         Z_n = partition_function_given_n(X, pop, lambdas)
-        CDF_inverse = lambda u: -(log(1 - Z_n * lambdas[1] * n * u * exp(lambdas[0] * n)))/(lambdas[1] * n)
+        CDF_inverse = lambda u: -(np.log(1 - Z_n * lambdas[1] * n * u * np.exp(lambdas[0] * n)))/(lambdas[1] * n)
         u_samples = np.random.uniform(0, 1, pop)
         samples = [float(CDF_inverse(u).real) for u in u_samples] # checked: there is no imaginary part
         if min(samples) < 0:
-            u_samples = np.random.uniform(0, min(1, 1/(Z_n * lambdas[1] * n * exp(lambdas[0] * n))), pop)
+            u_samples = np.random.uniform(0, min(1, 1/(Z_n * lambdas[1] * n * np.exp(lambdas[0] * n))), pop)
             samples = [float(CDF_inverse(u).real) for u in u_samples]
         individuals += samples
     tree_id_list = list(range(len(individuals)))
@@ -552,13 +552,3 @@ if __name__ == '__main__':
     plt.grid(True)
     plt.tight_layout()
     plt.show()
-
-
-
-
-
-
-
-
-
-
