@@ -85,7 +85,7 @@ def sample_community(X):
         CDF_inverse = lambda u: -(np.log(1 - Z_n * lambdas[1] * n * u * np.exp(lambdas[0] * n)))/(lambdas[1] * n)
         u_samples = np.random.uniform(0, 1, pop)
         samples = [float(CDF_inverse(u).real) for u in u_samples] # checked: there is no imaginary part
-        if min(samples) < 0:
+        while np.isnan(samples).any():                                                                                  # TODO: might be stuck for a very long time
             u_samples = np.random.uniform(0, min(1, 1/(Z_n * lambdas[1] * n * np.exp(lambdas[0] * n))), pop)
             samples = [float(CDF_inverse(u).real) for u in u_samples]
         individuals += samples
@@ -170,6 +170,11 @@ def update_metabolic_rates(community, X, time_until_event, param):
         t_span = np.array([0, time_until_event])
         sol = odeint(g_wrapper, e, t_span, args=(
         n, X, param))
+
+        if np.isnan(float(sol[-1])):
+            print("SOMETHING WENT WRONG")
+            new_e.append(e)
+
         new_e.append(float(sol[-1]))
     community['e'] = new_e
     return community
@@ -186,6 +191,10 @@ def update_event_rates(community, X, p):
 def what_event_happened(birth_rates, death_rates, migration_rates, R, q):
     event_rates = np.concatenate([birth_rates, death_rates, migration_rates])
     cumulative_rates = np.cumsum(event_rates)
+
+    if np.isnan(cumulative_rates).any():
+        print("NaN detected in cumulative_rates")
+
     index = np.searchsorted(cumulative_rates, q * R)
 
     if index < len(birth_rates):
@@ -224,6 +233,7 @@ def perform_event(community, X, event_info):
     else: # event_type == 'death':
         species_id = community.iloc[idx]['Species_ID']
         e_value = community.iloc[idx]['e']
+        print(f"Removed e: {e_value}")
 
         # Remove individual
         community = community.drop(index=idx).reset_index(drop=True)
@@ -257,7 +267,7 @@ def perform_event(community, X, event_info):
     return community, S, N, E
 
 
-def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-05, obs_interval=1e-07):
+def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-04, obs_interval=1e-06):
     # Species_ID
     species_ids = np.zeros(species_indices[-1], dtype=int)
     for i in range(1, len(species_indices)):
@@ -266,7 +276,7 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-05,
         species_ids[start:end] = i
 
     # Prepare saving results
-    output_file = "C:/Users/5605407/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
+    output_file = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
     with open(output_file, 'w') as f:
         f.write(','.join(['Tree_ID', 'Species_ID', 'e', 'n', 'S', 'N', 'E', 't']) + '\n')
 
@@ -293,7 +303,11 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-05,
     birth_rates = p['b'] * community['n'] * community['e'] ** (-1 / 3)
     death_rates = p['d'] * E / p['Ec'] * community['n'] * community['e'] ** (-1 / 3)
     migration_rates = np.full(len(community), p['m'] / N)
-    R = sum(birth_rates) + sum(death_rates) + sum(migration_rates)
+
+    birth_rates = p['b'] * community['n'] * community['e'] ** (-1 / 3)
+    death_rates = p['d'] * E / p['Ec'] * community['n'] * community['e'] ** (-1 / 3)
+    migration_rates = pd.Series(np.full(len(community), p['m'] / N), index=community.index)
+    R = (birth_rates + death_rates + migration_rates).sum()
 
     # Start simulation
     t = 0
@@ -301,6 +315,7 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-05,
         # Sample event time
         u = np.random.uniform(0, 1)
         time_until_event = -np.log(u) / R
+        #print(f"Time until event: {time_until_event}")
         t += time_until_event
 
         # In case the event happens *after* the current observation time
@@ -451,8 +466,6 @@ def k_means_clustering(df, ncluster):
     # df_with_clusters.to_csv("df_with_species_clusters.csv", index=False)
     return df_with_clusters
 
-
-
 # def do_regression(df):
 #     all_census = sorted(df['census'].unique())
 #     reduced_census = deepcopy(all_census)
@@ -513,15 +526,25 @@ def k_means_clustering(df, ncluster):
 #     pass
 
 
-
 if __name__ == '__main__':
     param = {                                                                                 # from Micahs dissertation
-        'b': 0.2, 'd': 0.2, 'Ec': 2 * 10**7, 'm': 437.3,
-        'w': 1.0, 'w1': 0.42, 'mu_meta': 0.0215
+        'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10**6, 'm': 437.3,
+        'w': 10.0, 'w1': 4.2, 'mu_meta': 0.0215
     }
 
-    X = {                                                                                     # from Micahs dissertation
-        'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
+    # Changed 'Ec': 2 * 10**7 to 4000 * 10**6
+    # and w from 1.0 to 10.0 and w1 from 0.42 to 4.2
+
+    # X = {                                                                                     # from Micahs dissertation
+    #     'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
+    # }
+
+    # Smaller community than BCI forest
+    X = {
+        'E':5000 * 10**6,
+        'N':5000,
+        'S':45,
+        'beta':0.0001
     }
 
     # Sample a community
@@ -529,26 +552,28 @@ if __name__ == '__main__':
     X['S'], X['N'], X['E'] = len(species_indices) - 1, len(metabolic_rates), sum(metabolic_rates)
 
     # Generate trajectories of its state variables
-    gillespie(metabolic_rates, species_indices, tree_id_list, X, param, t_max=1e-05, obs_interval=1e-06)
+    gillespie(metabolic_rates, species_indices, tree_id_list, X, param, t_max=0.1, obs_interval=1e-04)
 
     # Load the CSV file
-    file_path = "C:/Users/5605407/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
+    file_path = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
     df = pd.read_csv(file_path)
 
-    # Check the column names
-    print(df.columns)
+    fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    # Plot trajectories of S, N, E
-    plt.figure(figsize=(10, 6))
+    # Left y-axis: N
+    ax1.plot(df['t'], df['N'], color='tab:green', marker='s', label='N (Abundance)')
+    ax1.set_ylabel('N (Abundance)', color='tab:green')
+    ax1.tick_params(axis='y', labelcolor='tab:green')
 
-    plt.plot(df['time'], df['S'], label='S (Species richness)', marker='o')
-    plt.plot(df['time'], df['N'], label='N (Abundance)', marker='s')
-    plt.plot(df['time'], df['E'], label='E (Energy)', marker='^')
+    # Right y-axis: E
+    ax2 = ax1.twinx()
+    ax2.plot(df['t'], df['E'], color='tab:red', marker='^', label='E (Energy)')
+    ax2.set_ylabel('E (Energy)', color='tab:red')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
 
-    plt.xlabel('Time')
-    plt.ylabel('Value')
-    plt.title('Trajectories of S, N, and E')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
+    # X-axis and common formatting
+    ax1.set_xlabel('Time')
+    plt.title('Trajectories of N and E')
+    ax1.grid(True)
+    fig.tight_layout()
     plt.show()

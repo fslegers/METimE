@@ -8,6 +8,7 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.cluster import KMeans
 from sklearn.metrics import r2_score
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+import re
 
 def calculate_vif(X):
     """Calculate VIF for each feature in a DataFrame."""
@@ -16,7 +17,7 @@ def calculate_vif(X):
     vif_data['VIF'] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
     return vif_data
 
-def remove_high_vif_features(X, threshold=10.0):
+def remove_high_vif_features(X, threshold=25.0):
     while True:
         vif = calculate_vif(X)
         max_vif = vif['VIF'].max()
@@ -64,10 +65,11 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         feature_cols = feature_cols.drop(columns=['de', 'dS', 'dN', 'dE'])
 
     # Step 4: Compute polynomial features
-    poly = PolynomialFeatures(degree=2, include_bias=True)
+    poly = PolynomialFeatures(degree=3, include_bias=True)
     X_poly = poly.fit_transform(feature_cols)
     feature_names = poly.get_feature_names_out(feature_cols.columns)
     X = pd.DataFrame(X_poly, columns=feature_names, index=df.index)
+    del(X_poly)
 
     # Step 5: take mean over individuals per species
     if level == 'individuals':
@@ -80,15 +82,25 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         X.index = df.index
         y.index = df.index
 
-    # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
-    cols_to_drop = [col for col in X.columns if 'e^' in col]
+    # # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
+    # cols_to_drop = [col for col in X.columns if 'e^' in col]
+    # X = X.drop(columns=cols_to_drop)
+
+    # REMOVE HIGHER ORDERS OF STATE VARIABLES
+    pattern = re.compile(r'(N|E|S)_(\d*)\^([2-9]|\d{2,})')
+
+    cols_to_drop = [
+        col for col in X.columns
+        if pattern.search(col) or ('n' not in col and 'e' not in col)
+    ]
+
     X = X.drop(columns=cols_to_drop)
 
-    # Step 5a: remove colinear features
-    X = remove_high_vif_features(X)
+    # # Step 5a: remove colinear features
+    # X = remove_high_vif_features(X)
 
     # Step 6: Fit model and predict
-    model = LinearRegression()
+    model = Lasso()
     model.fit(X, y)
     y_pred = model.predict(X)
 
