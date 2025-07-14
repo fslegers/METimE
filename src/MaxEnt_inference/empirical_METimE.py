@@ -60,7 +60,7 @@ def exp_in_R(n, e, X, functions, lambdas):
 
 def integrate_bin(n, a, b, lambdas, alphas, betas):
     #return quad(lambda e: np.exp(exp_in_R(n, e, X, functions, lambdas)), a, b)[0]
-    I = quad(lambda e: np.exp(- lambdas[1] * n * e
+    I = quad(lambda e: np.exp(-lambdas[1] * n * e
                                   - lambdas[2] * (alphas[3] * e + alphas[4] * e * n + alphas[5] * e ** 2)
                                   - lambdas[3] * (betas[3] * e + betas[4] * e * n + betas[5] * e ** 2)
                                ), a, b)[0]
@@ -76,10 +76,10 @@ def integrate_bin(n, a, b, lambdas, alphas, betas):
 def integrate_for_n(args):
     n, e_max, X, functions, lambdas, alphas, betas = args
     edges = np.linspace(0, 1, 11 + 1) ** 2 * e_max
-    return (np.exp(- lambdas[2] * alphas[0] * X['E_t']
+    return (np.exp(-lambdas[2] * alphas[0] * X['E_t']
                   - lambdas[3] * betas[0] * X['E_t'])
             * sum(
-                np.exp(- lambdas[0] * n
+                np.exp(-lambdas[0] * n
                        - lambdas[2] * (alphas[1] * n + alphas[2] * n ** 2)
                        - lambdas[3] * (betas[1] * n + betas[2] * n ** 2)) *
                 integrate_bin(n, a, b, lambdas, alphas, betas)
@@ -91,19 +91,19 @@ def integrate_with_cutoff(X, functions, lambdas):
     scipy.integrate.quad() gave warnings and suggested doing the computation on multiple subranges.
     So we split it into 5 regions, and parallelize over `n` to speed up computations.
     """
-    alphas = [- 4.2577836468050255e-07,
+    alphas = [-4.2577836468050255e-07,
               0.004115429750029052,
               - 1.2340258201126042e-06,
-              0.0007050089504230784,
-              4.240319168064214e-06,
-              - 8.857872661055533e-09]
+              0.0007050089504230784 * 1e06,
+              4.240319168064214e-06 * 1e06,
+              - 8.857872661055533e-09 * (1e06 ** 2)]
 
     betas = [- 5.0790489992858706e-05,
              - 0.04641707200559591,
              1.196180145098891e-06,
-             0.25103426364018466,
-             0.0005510138124147476,
-             7.71564817664272e-06]
+             0.25103426364018466 * 1e06,
+             0.0005510138124147476 * 1e06,
+             7.71564817664272e-06 * (1e06 ** 2)]
 
     # TODO: moeten we steeds X, functions en lambdas meegeven?
     task_args = [
@@ -155,14 +155,12 @@ def compute_entropy_contribution(n, e_max, Z, X, functions, lambdas, alphas, bet
                * quad(integrand, a, b)[0] for a, b in zip(edges[:-1], edges[1:])]
     return np.exp(-(lambdas[2] * alphas[0] + lambdas[3] * betas[0]) * X['E_t']) * np.sum(results)
 
+
 def entropy(lambdas, functions, X, alphas, betas):
     """
     Compute Shannon entropy for the given lambdas and functions.
     Parallelized version.
     """
-    if lambdas[3] < -2.8e-07 or lambdas[2] < -1.7e-05: # Workaround to prevent invalid calculations later on
-        return np.inf
-
     Z = integrate_with_cutoff(X, functions, lambdas)
 
     # Find the maximum of n for which we are doing calculations
@@ -232,10 +230,10 @@ def compute_constraint_contribution(n, e_max, X, f_k, all_f, lambdas, alphas, be
                                      )
 
     edges = np.linspace(0, 1, 11 + 1) ** 2 * e_max
-    return (np.exp(- lambdas[2] * alphas[0] * X['E_t']
+    return (np.exp(-lambdas[2] * alphas[0] * X['E_t']
                   - lambdas[3] * betas[0] * X['E_t']) *
             sum(
-                np.exp(- lambdas[0] * n
+                np.exp(-lambdas[0] * n
                        - lambdas[2] * (alphas[1] * n + alphas[2] * n ** 2)
                        - lambdas[3] * (betas[1] * n + betas[2] * n ** 2)
                        ) *
@@ -265,6 +263,27 @@ def constraint(f_k, lambdas, functions, F_k, X, alphas, betas):
     Z = integrate_with_cutoff(X, functions, lambdas)
     return I / Z - F_k
 
+def compute_bounds(X, coeffs):
+    N_max = X['N_t']
+    E_max = X['E_t']
+
+    # Define the boundary values to check
+    n_values = [1, N_max]
+    e_values = [0, E_max]
+
+    max_abs_val = 0
+
+    for n in n_values:
+        for e in e_values:
+            val = max(coeffs[0] * X['E_t'], (coeffs[1] * n + coeffs[2] * n ** 2), (coeffs[3] * e + coeffs[4] * e * n + coeffs[5] * e ** 2))
+            if val > max_abs_val:
+                max_abs_val = val
+
+    if max_abs_val == 0:
+        return (None, None)  # avoid division by zero
+
+    bound = 500 / max_abs_val
+    return (-bound, bound)
 
 def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
     # Collect all constraints
@@ -274,12 +293,14 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
         constraint(f_k, lambdas, functions, F_k, X, alphas, betas)
     } for f, name in zip(functions, macro_var)]
 
-    # Set bounds                                                                                                        # TODO: why these bounds?
-    bounds = [(0, None), (0, None), (-1.7e-05, 8e-05), (-2.8e-07, None)] # these last two bounds should prevent overflow in exp()
+    # Set bounds
+    min_dn, max_dn = compute_bounds(X, alphas)
+    min_de, max_de = compute_bounds(X, betas)
 
-    # -l3 f(n, e) < 500
-    # l3 > 500 / f_dn(n, e, X) for all n, e
-    # - l4 h(n, e) < 500
+    bounds = [(0, None),
+              (0, None),
+              (min_dn, max_dn),
+              (min_de, max_de)]
 
     def my_callback(xk, state):
         print("Current grad norm:", np.linalg.norm(state.grad))
@@ -293,7 +314,7 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
                       bounds=bounds,
                       method="trust-constr",
                       callback=my_callback,
-                      options={'maxiter': 100,
+                      options={'maxiter': 10,
                                'xtol': 1e-6,
                                'gtol': 1e-9,
                                'barrier_tol': 1e-12,
@@ -460,16 +481,16 @@ if __name__ == "__main__":
         alphas = [- 4.2577836468050255e-07,
                   0.004115429750029052,
                   - 1.2340258201126042e-06,
-                  0.0007050089504230784,
-                  4.240319168064214e-06,
-                  - 8.857872661055533e-09]
+                  0.0007050089504230784 * 1e06,
+                  4.240319168064214e-06 * 1e06,
+                  - 8.857872661055533e-09 * (1e06 ** 2)]
 
         betas = [- 5.0790489992858706e-05,
                  - 0.04641707200559591,
                  1.196180145098891e-06,
-                 0.25103426364018466,
-                 0.0005510138124147476,
-                 7.71564817664272e-06]
+                 0.25103426364018466 * 1e06,
+                 0.0005510138124147476 * 1e06,
+                 7.71564817664272e-06 * (1e06 ** 2)]
 
         #min_f, max_f = plot_dn(X)
         #min_h, max_h = plot_de(X)
@@ -493,6 +514,16 @@ if __name__ == "__main__":
 Uit tests blijkt dat het wel zin heeft (qua rekentijd) om de integraalterm zo simpel mogelijk te maken,
 oftewel het zo ver mogelijk uitwerken
 """
+
+"""
+02-07
+
+Begonnen met e transformeren naar e/1e06, maar hierdoor veranderen de coefficienten in de transitiefuncties misschien ook.
+Deze dan ook fitten op e/1e06 ipv e?
+
+"""
+
+
 
 # l1, l2, l3, l4 = [0.0001, 0.00002, 0.0003, 0.0005]
 # N, E = int(2.353380e+05), 2.629646e+07

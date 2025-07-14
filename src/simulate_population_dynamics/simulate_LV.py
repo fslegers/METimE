@@ -1,18 +1,22 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 import seaborn as sns
 import pandas as pd
 import sdeint
 from copy import deepcopy
 import sys
 import os
-from sklearn.linear_model import ElasticNet
-from scipy import stats
+import warnings
+
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression
 from matplotlib.patches import Patch
 from sklearn.metrics import r2_score
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from tests.regression_on_simulation_dynamics import compute_deltas, polynomial_regression
+from tests.regression_on_simulation_dynamics import compute_deltas
+
+#warnings.filterwarnings("ignore")
 
 def f(n, t, growth_rates, alpha):
     return n * growth_rates * (1 - alpha @ n)
@@ -55,23 +59,28 @@ def plot_solutions(sol, tspan, model=""):
     sns.despine()
     plt.tight_layout()
     #plt.show()
-    path = "C://Users/5605407/Documents/PhD/Chapter_2/Results/LV/dynamics_" + model + ".png"
+    path = "C://Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/dynamics_" + model + ".png"
     plt.savefig(path)
-
 
 
 def create_df(solutions):
     T, S = solutions.shape
 
+    # Increase the observation interval by only keeping every 10th time step                                            # TODO: REMOVE AGAIN BECAUSE THIS WILL HAPPEN LATER ON
+    # so that dn is not so small
+    sampled_censuses = np.arange(T)
+    subsamples = solutions[sampled_censuses]
+    T = subsamples.shape[0]
+
     # Create base DataFrame
     df = pd.DataFrame({
-        "census": np.repeat(np.arange(T), S),
+        "census": np.repeat(np.arange(1, T + 1), S),
         "species": np.tile(np.arange(S), T),
-        "n": solutions.flatten()
+        "n": subsamples.flatten()
     })
 
     # Pivot back into (T x S) matrix for easier computation of totals
-    n_matrix = solutions
+    n_matrix = subsamples
 
     # Compute N (total individuals) and S (species richness) over time
     total_N = n_matrix.sum(axis=1)  # Total individuals at each time
@@ -91,7 +100,7 @@ def create_df(solutions):
     df["dN"] = np.repeat(dN, S)
     df["dS"] = np.repeat(dS, S)
 
-    df = df[df['census'] > 0]
+    df = df[df['census'] > 1]
 
     return df
 
@@ -321,8 +330,6 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
     def G_wrapped(n, t):
         return G(n, t, noise_term)
 
-
-    # TODO: Repeat 100 times and take average?
     if model_func == "constant":
         growth_rates, A, initial_conditions = constant()
     elif model_func == "food_web":
@@ -356,39 +363,63 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
     solutions = np.array(solutions)  # shape: (timesteps, 30)
     solutions = solutions * N  # scale up populations
 
-    plot_solutions(solutions, tspan, model_func)
+    #plot_solutions(solutions, tspan, model_func)
     df = create_df(solutions)
+
+    if var == 0.1:
+        df.to_csv(f'../../data/LV_{model_func}_regression_library.csv', index=False)
 
     return df
 
 
-def do_polynomial_regression(X, y, census, species, transition_function):
-    # TODO: this should be a summation over the individuals of a species,
-    #  so a summation of some of the rows in X
+def do_polynomial_regression(df, LV_model, var, regression_type='global', cluster=""):
+    model = LinearRegression()
 
-    #model = LinearRegression()
-    model = ElasticNet()
+    # Separate target and features
+    y = df['dn']
+    X = df.drop(columns='dn')
 
-    # Remove outliers from the data set
-    threshold = 3
-    z_scores = np.abs(stats.zscore(X))
-    outliers = (z_scores > threshold)
-    outlier_indices = np.where(outliers.any(axis=1))[0]
-    #X, y = X.drop(outlier_indices, axis=0), y.drop(outlier_indices, axis=0)
-    keep_indices = np.setdiff1d(np.arange(len(X)), outlier_indices)
-    X = X.iloc[keep_indices]
-    y = y.iloc[keep_indices]
-    species = species.iloc[keep_indices]
-    print(f"Number of outliers removed: {len(outlier_indices)}")
+    # Compute polynomial features
+    poly = PolynomialFeatures(degree=2, include_bias=True)
+    X_poly = poly.fit_transform(X)
+    feature_names = poly.get_feature_names_out(X.columns)
 
-    # Error on training set
-    model.fit(X, y)
-    y_pred = model.predict(X)
+    # Standardize features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_poly)
 
-    return y, y_pred, species
+    # Fit model
+    model.fit(X_scaled, y)
+    y_pred = model.predict(X_scaled)
+
+    # De-standardize coefficients
+    beta_std = model.coef_
+    mu = scaler.mean_
+    sigma = scaler.scale_
+
+    beta_orig = beta_std / sigma
+    intercept_orig = model.intercept_ - np.sum((beta_std * mu) / sigma)
+
+    # Combine into DataFrame
+    coeff_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Coefficient': beta_orig
+    })
+
+    # Add intercept as a separate row (optional but useful)
+    coeff_df.loc[len(coeff_df)] = ['Intercept', intercept_orig]
+
+    # Save
+    if var == 0.1:
+        coeff_df.to_csv(
+            f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/LV/METimE_{LV_model}_dn_{regression_type}{cluster}.csv',
+            index=False
+        )
+
+    return y, y_pred
 
 
-def set_up_regression(df, N_clusters=None, clustered=False):
+def set_up_regression(df, var, N_clusters=None, LV_model='constant', regression_type="global", cluster=""):
     # Single observation interval
     all_census = sorted(df['census'].unique())
     reduced_census = deepcopy(all_census)[::150]
@@ -399,15 +430,16 @@ def set_up_regression(df, N_clusters=None, clustered=False):
     # Recompute dn, dN, dS
     df_deltas = compute_deltas(df_filtered, 'LV').reset_index(drop=True)
 
-    if clustered:
+    if regression_type=="clustered":
         df_deltas = df_deltas.merge(N_clusters, on='census', how='left')
 
     # METimE regression
-    cols_to_exclude = ['dN', 'n_next', 'N_next', 'S_next']
+    cols_to_exclude = ['dN', 'n_next', 'N_next', 'S_next', 'dS', 'census', 'species', 'S_t']
     df_for_setup = df_deltas.drop(columns=cols_to_exclude)
-    X, y, census, species = polynomial_regression.set_up_library(df_for_setup, 3, False, False, False)
+    # X, y, census, species = polynomial_regression.set_up_library(df_for_setup, 3, False, False, False)
+    y, y_pred = do_polynomial_regression(df_for_setup, LV_model, var, regression_type, cluster)
 
-    return X, y, census, species
+    return y, y_pred
 
 
 def plot_observed_vs_predicted(obs, pred, title, species=None):
@@ -447,7 +479,7 @@ def plot_observed_vs_predicted(obs, pred, title, species=None):
     plt.tight_layout()
     #plt.show()
 
-    path = "C://Users/5605407/Documents/PhD/Chapter_2/Results/LV/" + title + ".png"
+    path = "C://Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/" + title + ".png"
     plt.savefig(path)
 
 
@@ -473,7 +505,7 @@ def get_cluster_state_variables(df):
     return cluster_totals
 
 
-def get_metrics(model, var, T=30, repetitions=25):
+def get_metrics(model, var, T=30, repetitions=1):
     from collections import defaultdict
 
     results_r2 = defaultdict(list)
@@ -483,25 +515,27 @@ def get_metrics(model, var, T=30, repetitions=25):
         df = three_groups_LV(model, T=T, var=var)
 
         # -------- GLOBAL REGRESSION --------
-        X, y, census, species = set_up_regression(df)
-        obs, pred, _ = do_polynomial_regression(X, y, census, species, 'dn')
-        r2 = r2_score(obs['dn'], pred[:,0])
-        adj_r2 = adjusted_r2_score(r2, len(obs['dn']), X.shape[1])
+        obs, pred = set_up_regression(df, var, LV_model=model, regression_type="global")
+        obs = obs.tolist()
+        pred = pred.tolist()
+        r2 = r2_score(obs, pred)
+        #adj_r2 = adjusted_r2_score(r2, len(obs), X.shape[1])
         results_r2['global'].append(r2)
-        results_adj_r2['global'].append(adj_r2)
+        #results_adj_r2['global'].append(adj_r2)
 
         # -------- SPECIES-SPECIFIC REGRESSION --------
         species_r2, species_adj_r2 = [], []
         for sp in df['species'].unique():
             df_sp = df[df['species'] == sp]
-            X, y, census, species = set_up_regression(df_sp)
-            y_true, y_pred, _ = do_polynomial_regression(X, y, census, species, 'dn')
-            r2 = r2_score(y_true['dn'], y_pred[:,0])
-            adj_r2 = adjusted_r2_score(r2, len(y_true), X.shape[1])
+            obs, pred = set_up_regression(df_sp, var, LV_model=model, regression_type="species-specific")
+            obs = obs.tolist()
+            pred = pred.tolist()
+            r2 = r2_score(obs, pred)
+            #adj_r2 = adjusted_r2_score(r2, len(obs), X.shape[1])
             species_r2.append(r2)
-            species_adj_r2.append(adj_r2)
+            #species_adj_r2.append(adj_r2)
         results_r2['species_specific'].append(np.nanmean(species_r2))
-        results_adj_r2['species_specific'].append(np.nanmean(species_adj_r2))
+        #results_adj_r2['species_specific'].append(np.nanmean(species_adj_r2))
 
         # -------- CLUSTERED REGRESSION --------
         df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
@@ -509,21 +543,22 @@ def get_metrics(model, var, T=30, repetitions=25):
         cluster_r2, cluster_adj_r2 = [], []
         for cluster in df['cluster'].unique():
             df_cluster = df[df['cluster'] == cluster]
-            X, y, census, species = set_up_regression(df_cluster.drop(columns=['cluster']), X_clustered, clustered=True)
-            y_true, y_pred, _ = do_polynomial_regression(X, y, census, species, 'dn')
-            r2 = r2_score(y_true['dn'], y_pred[:,0])
-            adj_r2 = adjusted_r2_score(r2, len(y_true), X.shape[1])
+            obs, pred = set_up_regression(df_cluster.drop(columns=['cluster']), var, X_clustered, regression_type="clustered", cluster=cluster, LV_model=model)
+            obs = obs.tolist()
+            pred = pred.tolist()
+            r2 = r2_score(obs, pred)
+            #adj_r2 = adjusted_r2_score(r2, len(obs), X.shape[1])
             cluster_r2.append(r2)
-            cluster_adj_r2.append(adj_r2)
+            #cluster_adj_r2.append(adj_r2)
         results_r2['clustered'].append(round(np.nanmean(cluster_r2), 3))
-        results_adj_r2['clustered'].append(round(np.nanmean(cluster_adj_r2), 3))
+        #results_adj_r2['clustered'].append(round(np.nanmean(cluster_adj_r2), 3))
 
     # Convert to DataFrames: one row per treatment, one column per model-variance
     index = ['global', 'species_specific', 'clustered']
     avg_r2 = pd.DataFrame({f"{model},{var}": [np.nanmean(results_r2[k]) for k in index]}, index=index)
     avg_adj_r2 = pd.DataFrame({f"{model},{var}": [np.nanmean(results_adj_r2[k]) for k in index]}, index=index)
 
-    return avg_r2, avg_adj_r2
+    return avg_r2
 
 
 if __name__ == "__main__":
@@ -538,51 +573,48 @@ if __name__ == "__main__":
                   'cyclic',
                   'cleaner_fish',
                   'resource_competition']:
+    # for model in ['constant']:
         #for var in [0.0, 0.05, 0.1, 0.5]:
         for var in [0.1]:
             df = three_groups_LV(model, T=30, var=var)
 
-#             # do non-species specific regression
-#             X, y, census, species = set_up_regression(df)
-#             obs, pred, species = do_polynomial_regression(X, y, census, species,'dn')
-#             plot_observed_vs_predicted(obs['dn'], pred[:,0], species=species, title=f"{model}_{var}_global")
-#
-#             # do regression per species
-#             obs, pred, species_list = [], [], []
-#             for species in df['species'].unique():
-#                 X, y, census, species = set_up_regression(df[df['species'] == species])
-#                 y, y_pred, species = do_polynomial_regression(X, y, census, species,'dn')
-#                 obs += (y['dn']).tolist()
-#                 pred += (y_pred[:,0]).tolist()
-#                 species_list += list(species * len(y))
-#             plot_observed_vs_predicted(obs, pred, species= species_list, title=f"{model}_{var}_species_specific")
-#
-#             # do regression per cluster
-#             df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
-#             X_clustered = get_cluster_state_variables(df)
-#             obs, pred, cluster_list = [], [], []
-#             for cluster in df['cluster'].unique():
-#                 df_cluster = df[df['cluster'] == cluster]
-#                 X, y, census, species = set_up_regression(df_cluster.copy().drop(columns=['cluster']), X_clustered, clustered=True)
-#                 y, y_pred, species = do_polynomial_regression(X, y, census, species, 'dn')
-#                 obs += (y['dn']).tolist()
-#                 pred += (y_pred[:, 0]).tolist()
-#                 cluster_list += list(cluster * len(y))
-#             plot_observed_vs_predicted(obs, pred, species=cluster_list, title=f"{model}_{var}_clustered")
-#
-#             # Create table with R^2 and adjusted R^2
-#             avg_r2, avg_adj_r2 = get_metrics(model, var)
-#             all_r2.append(round(avg_r2, 3))
-#             all_adj_r2.append(round(avg_adj_r2, 3))
-#
-# final_r2_df = pd.concat(all_r2, axis=1).transpose()
-# final_adj_r2_df = pd.concat(all_adj_r2, axis=1).transpose()
-#
-# final_r2_df = final_r2_df.reset_index().rename(columns={'index': 'model'})
-# final_adj_r2_df = final_adj_r2_df.reset_index().rename(columns={'index': 'model'})
-#
-# final_r2_df.to_csv('C:/Users/5605407/Documents/PhD/Chapter_2/Results/LV/r2.csv', index=False)
-# final_adj_r2_df.to_csv('C:/Users/5605407/Documents/PhD/Chapter_2/Results/LV/adjusted_r2.csv', index=False)
+            # do global regression
+            obs, pred = set_up_regression(df, var, LV_model=model, regression_type="global")
+            plot_observed_vs_predicted(obs, pred, title=f"{model}_{var}_global")
+
+            # do regression per species
+            obs, pred, species_list = [], [], []
+            for species in df['species'].unique():
+                y, y_pred = set_up_regression(df[df['species'] == species], var, LV_model=model, regression_type="species-specific")
+                obs += y.tolist()
+                pred += y_pred.tolist()
+            plot_observed_vs_predicted(obs, pred, title=f"{model}_{var}_species_specific")
+
+            # do regression per cluster
+            df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
+            X_clustered = get_cluster_state_variables(df)
+            obs, pred, cluster_list = [], [], []
+            for cluster in df['cluster'].unique():
+                df_cluster = df[df['cluster'] == cluster]
+                y, y_pred = set_up_regression(df_cluster.copy().drop(columns=['cluster']), var, X_clustered, LV_model=model, regression_type="clustered", cluster={cluster})
+                obs += y.tolist()
+                pred += y_pred.tolist()
+                cluster_list += list(cluster * len(y))
+            plot_observed_vs_predicted(obs, pred, species=cluster_list, title=f"{model}_{var}_clustered")
+
+            # Create table with R^2 and adjusted R^2
+            #avg_r2 = get_metrics(model, var)
+            #all_r2.append(round(avg_r2, 3))
+            #all_adj_r2.append(round(avg_adj_r2, 3))
+
+#final_r2_df = pd.concat(all_r2, axis=1).transpose()
+#final_adj_r2_df = pd.concat(all_adj_r2, axis=1).transpose()
+
+#final_r2_df = final_r2_df.reset_index().rename(columns={'index': 'model'})
+#final_adj_r2_df = final_adj_r2_df.reset_index().rename(columns={'index': 'model'})
+
+#final_r2_df.to_csv('C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/r2.csv', index=False)
+#final_adj_r2_df.to_csv('C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/adjusted_r2.csv', index=False)
 
 
 

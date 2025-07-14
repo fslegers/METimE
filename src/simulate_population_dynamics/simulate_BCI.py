@@ -206,7 +206,7 @@ def what_event_happened(birth_rates, death_rates, migration_rates, R, q):
 
 
 def perform_event(community, X, event_info):
-    print(event_info)
+    #print(event_info)
     event_type, idx = event_info
     S, N, E = X['S'], X['N'], X['E']
 
@@ -233,7 +233,7 @@ def perform_event(community, X, event_info):
     else: # event_type == 'death':
         species_id = community.iloc[idx]['Species_ID']
         e_value = community.iloc[idx]['e']
-        print(f"Removed e: {e_value}")
+        #print(f"Removed e: {e_value}")
 
         # Remove individual
         community = community.drop(index=idx).reset_index(drop=True)
@@ -317,6 +317,7 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-04,
         time_until_event = -np.log(u) / R
         #print(f"Time until event: {time_until_event}")
         t += time_until_event
+        print(t)
 
         # In case the event happens *after* the current observation time
         while obs_pointer < len(observation_times) and t > observation_times[obs_pointer]:
@@ -466,6 +467,99 @@ def k_means_clustering(df, ncluster):
     # df_with_clusters.to_csv("df_with_species_clusters.csv", index=False)
     return df_with_clusters
 
+
+def start_from_METE():
+    param = {  # from Micahs dissertation
+        'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10 ** 6, 'm': 437.3,
+        'w': 1.0, 'w1': 0.42, 'mu_meta': 0.0215
+    }
+
+    # Changed 'Ec': 2 * 10**7 to 4000 * 10**6
+    # and w from 1.0 to 10.0 and w1 from 0.42 to 4.2
+
+    # X = {                                                                                     # from Micahs dissertation
+    #     'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
+    # }
+
+    # Smaller community than BCI forest
+    X = {
+        'E': 5000 * 10 ** 6,
+        'N': 5000,
+        'S': 45,
+        'beta': 0.0001
+    }
+
+    # Sample a community
+    metabolic_rates, species_indices, tree_id_list = sample_community(X)
+    X['S'], X['N'], X['E'] = len(species_indices) - 1, len(metabolic_rates), sum(metabolic_rates)
+
+    # Generate trajectories of its state variables
+    gillespie(metabolic_rates, species_indices, tree_id_list, X, param, t_max=0.02, obs_interval=5e-04)
+
+    # Load the CSV file
+    file_path = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
+    df = pd.read_csv(file_path)
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Left y-axis: N
+    ax1.plot(df['t'], df['N'], color='tab:green', marker='s', label='N (Abundance)')
+    ax1.set_ylabel('N (Abundance)', color='tab:green')
+    ax1.tick_params(axis='y', labelcolor='tab:green')
+
+    # Right y-axis: E
+    ax2 = ax1.twinx()
+    ax2.plot(df['t'], df['E'], color='tab:red', marker='^', label='E (Energy)')
+    ax2.set_ylabel('E (Energy)', color='tab:red')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
+
+    # X-axis and common formatting
+    ax1.set_xlabel('Time')
+    plt.title('Trajectories of N and E')
+    ax1.grid(True)
+    fig.tight_layout()
+    plt.show()
+
+
+def start_from_scratch():
+    param = {
+        'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10 ** 6, 'm': 437.3,
+        'w': 1.0, 'w1': 0.42, 'mu_meta': 0.02
+    }
+
+    X_meta = {                                                                                                          # from Micahs dissertation
+        'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
+    }
+
+    # Sample a meta community
+    _, meta_species, _ = sample_community(X_meta)
+
+    # TODO: run Gillepsie, but with a different type of migration.
+
+    # Load the CSV file
+    file_path = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
+    df = pd.read_csv(file_path)
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Left y-axis: N
+    ax1.plot(df['t'], df['N'], color='tab:green', marker='s', label='N (Abundance)')
+    ax1.set_ylabel('N (Abundance)', color='tab:green')
+    ax1.tick_params(axis='y', labelcolor='tab:green')
+
+    # Right y-axis: E
+    ax2 = ax1.twinx()
+    ax2.plot(df['t'], df['E'], color='tab:red', marker='^', label='E (Energy)')
+    ax2.set_ylabel('E (Energy)', color='tab:red')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
+
+    # X-axis and common formatting
+    ax1.set_xlabel('Time')
+    plt.title('Trajectories of N and E')
+    ax1.grid(True)
+    fig.tight_layout()
+    plt.show()
+
 # def do_regression(df):
 #     all_census = sorted(df['census'].unique())
 #     reduced_census = deepcopy(all_census)
@@ -527,53 +621,4 @@ def k_means_clustering(df, ncluster):
 
 
 if __name__ == '__main__':
-    param = {                                                                                 # from Micahs dissertation
-        'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10**6, 'm': 437.3,
-        'w': 10.0, 'w1': 4.2, 'mu_meta': 0.0215
-    }
-
-    # Changed 'Ec': 2 * 10**7 to 4000 * 10**6
-    # and w from 1.0 to 10.0 and w1 from 0.42 to 4.2
-
-    # X = {                                                                                     # from Micahs dissertation
-    #     'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
-    # }
-
-    # Smaller community than BCI forest
-    X = {
-        'E':5000 * 10**6,
-        'N':5000,
-        'S':45,
-        'beta':0.0001
-    }
-
-    # Sample a community
-    metabolic_rates, species_indices, tree_id_list = sample_community(X)
-    X['S'], X['N'], X['E'] = len(species_indices) - 1, len(metabolic_rates), sum(metabolic_rates)
-
-    # Generate trajectories of its state variables
-    gillespie(metabolic_rates, species_indices, tree_id_list, X, param, t_max=0.1, obs_interval=1e-04)
-
-    # Load the CSV file
-    file_path = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
-    df = pd.read_csv(file_path)
-
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    # Left y-axis: N
-    ax1.plot(df['t'], df['N'], color='tab:green', marker='s', label='N (Abundance)')
-    ax1.set_ylabel('N (Abundance)', color='tab:green')
-    ax1.tick_params(axis='y', labelcolor='tab:green')
-
-    # Right y-axis: E
-    ax2 = ax1.twinx()
-    ax2.plot(df['t'], df['E'], color='tab:red', marker='^', label='E (Energy)')
-    ax2.set_ylabel('E (Energy)', color='tab:red')
-    ax2.tick_params(axis='y', labelcolor='tab:red')
-
-    # X-axis and common formatting
-    ax1.set_xlabel('Time')
-    plt.title('Trajectories of N and E')
-    ax1.grid(True)
-    fig.tight_layout()
-    plt.show()
+    start_from_scratch()

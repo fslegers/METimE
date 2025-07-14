@@ -82,7 +82,7 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         X.index = df.index
         y.index = df.index
 
-    # # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
+    # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
     # cols_to_drop = [col for col in X.columns if 'e^' in col]
     # X = X.drop(columns=cols_to_drop)
 
@@ -112,9 +112,14 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
     coeff_df = pd.DataFrame({'Feature': model.feature_names_in_,
                             'Coefficient': model.coef_})
 
-    coeff_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
+    coeff_df.to_csv(
+        f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv',
+        index=False)
+    # coeff_df.to_csv(
+    #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI_quadrat_2/METimE_{target}_{cluster}.csv',
+    #     index=False)
     print(coeff_df)
-    return y, y_pred, species_ID, census\
+    return y, y_pred, species_ID, census
 
 
 def do_dynaMETE_regression(df, target='dn', level='individuals', cluster='global'):
@@ -276,14 +281,21 @@ if __name__ == '__main__':
         #df = pd.read_csv("C:/Users/5605407/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv")
         #df = df.rename(columns={'t':'census})
 
-        # Empirical BCI data:
+        # Empirical BCI data (all):
         df = pd.read_csv("../../data/BCI_regression_library.csv")
         df = df.rename(columns={'species': 'Species_ID',
                                 'TreeID': 'Tree_ID'})
 
-        # # All species together
-        # y_obs, y_pred, species_ID, census = do_polynomial_regression(df, target=target)
-        # plot_observed_vs_predicted(y_obs, y_pred, f"Global ({target})", species_ID)
+        # IMPORTANT! Change the location where the coefficients are saved when a different data set is used!
+
+        # # Empirical BCI data (per plot):
+        # df = pd.read_csv("../../data/BCI_regression_library_quadrat_2.csv")
+        # df = df.rename(columns={'species': 'Species_ID',
+        #                         'TreeID': 'Tree_ID'})
+
+        # All species together
+        y_obs, y_pred, species_ID, census = do_polynomial_regression(df, target=target)
+        plot_observed_vs_predicted(y_obs, y_pred, f"Global ({target})", species_ID)
 
         # # All species separately
         # all_obs, all_pred, all_species = [], [], []
