@@ -62,7 +62,11 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         feature_cols = feature_cols.drop(columns=['Tree_ID'])
 
     if 'de' in feature_cols.columns:
-        feature_cols = feature_cols.drop(columns=['de', 'dS', 'dN', 'dE'])
+        feature_cols = feature_cols.drop(columns=['de'])
+
+    for col in ['dN', 'dE', 'dS', 'de']:
+        if col in feature_cols.columns:
+            feature_cols = feature_cols.drop(columns=[col])
 
     # Step 4: Compute polynomial features
     poly = PolynomialFeatures(degree=3, include_bias=True)
@@ -112,91 +116,94 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
     coeff_df = pd.DataFrame({'Feature': model.feature_names_in_,
                             'Coefficient': model.coef_})
 
-    coeff_df.to_csv(
-        f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv',
-        index=False)
+    # coeff_df.to_csv(
+    #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv',
+    #     index=False)
     # coeff_df.to_csv(
     #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI_quadrat_2/METimE_{target}_{cluster}.csv',
     #     index=False)
+    coeff_df.to_csv(
+        f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/simulated_BCI/METimE_{target}_{cluster}.csv',
+        index=False)
     print(coeff_df)
     return y, y_pred, species_ID, census
 
 
-def do_dynaMETE_regression(df, target='dn', level='individuals', cluster='global'):
-    if 'dn' not in df.columns and target == 'dn':
-        # Step 1: Compute dn = n(t+1) - n(t) per species
-        n_df = df[['Species_ID', 'census', 'n']].drop_duplicates()
-        n_df = n_df.sort_values(['Species_ID', 'census'])
-        n_df['dn'] = n_df.groupby('Species_ID')['n'].shift(-1) - n_df['n']
-
-        # Step 2: Filter original df to only rows where dn is defined
-        df = df.merge(n_df[['Species_ID', 'census', 'dn']], on=['Species_ID', 'census'], how='left')
-
-    if 'de' not in df.columns and target == 'de':
-        # Step 1: Compute dn = n(t+1) - n(t) per species
-        e_df = df[['Tree_ID', 'census', 'e']].drop_duplicates()
-        e_df = e_df.sort_values(['Tree_ID', 'census'])
-        e_df['de'] = e_df.groupby('Tree_ID')['e'].shift(-1) - e_df['e']
-
-        # Step 2: Filter original df to only rows where dn is defined
-        df = df.merge(e_df[['Tree_ID', 'census', 'de']], on=['Tree_ID', 'census'], how='left')
-
-    if target == 'dn':
-        df = df.dropna(subset=['dn'])
-        y = df['dn']
-    else:
-        df = df.dropna(subset=['de'])
-        y = df['de']
-
-    # Step 3: Prepare input features (drop ID and outcome columns)
-    feature_cols = df.drop(columns=['Species_ID', 'census', 'dn'], errors='ignore')
-
-    if level == 'individuals' and 'Tree_ID' in feature_cols.columns:
-        feature_cols = feature_cols.drop(columns=['Tree_ID'])
-
-    if 'de' in feature_cols.columns:
-        feature_cols = feature_cols.drop(columns=['de', 'dS', 'dN', 'dE'])
-
-    # Step 4: Compute features
-    X = pd.DataFrame({
-        'n_e_neg_1_3': df['n'] * df['e'] ** (-1 / 3),
-        'n_e_neg_1_3_E': df['E'] * df['n'] * df['e'] ** (-1 / 3),
-        'n_div_N': df['n'] / df['N'],
-        'n_e_2_3': df['n'] * df['e'] ** (2 / 3),
-        'n_e': df['n'] * df['e']
-    }, index=df.index)
-
-    # Step 5: take mean over individuals per species
-    if level == 'individuals':
-        X['Species_ID'] = df['Species_ID']
-        X['census'] = df['census']
-        y.index = df.index  # ensure alignment
-        X = X.groupby(['Species_ID', 'census']).mean() # TODO: check if this should be mean instead of sum
-        y = y.groupby([df['Species_ID'], df['census']]).mean()
-    else:
-        X.index = df.index
-        y.index = df.index
-
-
-    # Step 5a: remove colinear features
-    X = remove_high_vif_features(X)
-
-    # Step 6: Fit model and predict
-    model = LinearRegression()
-    model.fit(X, y)
-    y_pred = model.predict(X)
-
-    # Step 7: Return predictions with IDs
-    species_ID = X.reset_index()['Species_ID'] if level == 'individuals' else df['Species_ID']
-    census = X.reset_index()['census'] if level == 'individuals' else df['census']
-
-    # Save transition functions
-    coeff_df = pd.DataFrame({'Feature': model.feature_names_in_,
-                            'Coefficient': model.coef_})
-
-    coeff_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
-
-    return y, y_pred, species_ID, census\
+# def do_dynaMETE_regression(df, target='dn', level='individuals', cluster='global'):
+#     if 'dn' not in df.columns and target == 'dn':
+#         # Step 1: Compute dn = n(t+1) - n(t) per species
+#         n_df = df[['Species_ID', 'census', 'n']].drop_duplicates()
+#         n_df = n_df.sort_values(['Species_ID', 'census'])
+#         n_df['dn'] = n_df.groupby('Species_ID')['n'].shift(-1) - n_df['n']
+#
+#         # Step 2: Filter original df to only rows where dn is defined
+#         df = df.merge(n_df[['Species_ID', 'census', 'dn']], on=['Species_ID', 'census'], how='left')
+#
+#     if 'de' not in df.columns and target == 'de':
+#         # Step 1: Compute dn = n(t+1) - n(t) per species
+#         e_df = df[['Tree_ID', 'census', 'e']].drop_duplicates()
+#         e_df = e_df.sort_values(['Tree_ID', 'census'])
+#         e_df['de'] = e_df.groupby('Tree_ID')['e'].shift(-1) - e_df['e']
+#
+#         # Step 2: Filter original df to only rows where dn is defined
+#         df = df.merge(e_df[['Tree_ID', 'census', 'de']], on=['Tree_ID', 'census'], how='left')
+#
+#     if target == 'dn':
+#         df = df.dropna(subset=['dn'])
+#         y = df['dn']
+#     else:
+#         df = df.dropna(subset=['de'])
+#         y = df['de']
+#
+#     # Step 3: Prepare input features (drop ID and outcome columns)
+#     feature_cols = df.drop(columns=['Species_ID', 'census', 'dn'], errors='ignore')
+#
+#     if level == 'individuals' and 'Tree_ID' in feature_cols.columns:
+#         feature_cols = feature_cols.drop(columns=['Tree_ID'])
+#
+#     if 'de' in feature_cols.columns:
+#         feature_cols = feature_cols.drop(columns=['de', 'dS', 'dN', 'dE'])
+#
+#     # Step 4: Compute features
+#     X = pd.DataFrame({
+#         'n_e_neg_1_3': df['n'] * df['e'] ** (-1 / 3),
+#         'n_e_neg_1_3_E': df['E'] * df['n'] * df['e'] ** (-1 / 3),
+#         'n_div_N': df['n'] / df['N'],
+#         'n_e_2_3': df['n'] * df['e'] ** (2 / 3),
+#         'n_e': df['n'] * df['e']
+#     }, index=df.index)
+#
+#     # Step 5: take mean over individuals per species
+#     if level == 'individuals':
+#         X['Species_ID'] = df['Species_ID']
+#         X['census'] = df['census']
+#         y.index = df.index  # ensure alignment
+#         X = X.groupby(['Species_ID', 'census']).mean() # TODO: check if this should be mean instead of sum
+#         y = y.groupby([df['Species_ID'], df['census']]).mean()
+#     else:
+#         X.index = df.index
+#         y.index = df.index
+#
+#
+#     # Step 5a: remove colinear features
+#     X = remove_high_vif_features(X)
+#
+#     # Step 6: Fit model and predict
+#     model = LinearRegression()
+#     model.fit(X, y)
+#     y_pred = model.predict(X)
+#
+#     # Step 7: Return predictions with IDs
+#     species_ID = X.reset_index()['Species_ID'] if level == 'individuals' else df['Species_ID']
+#     census = X.reset_index()['census'] if level == 'individuals' else df['census']
+#
+#     # Save transition functions
+#     coeff_df = pd.DataFrame({'Feature': model.feature_names_in_,
+#                             'Coefficient': model.coef_})
+#
+#     coeff_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/METimE_{target}_{cluster}.csv', index=False)
+#
+#     return y, y_pred, species_ID, census\
 
 
 def plot_observed_vs_predicted(obs, pred, title, species=None):
@@ -278,13 +285,13 @@ if __name__ == '__main__':
         data = 'BCI'
 
         # Simulated BCI data:
-        #df = pd.read_csv("C:/Users/5605407/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv")
-        #df = df.rename(columns={'t':'census})
+        df = pd.read_csv("../../data/simulated_BCI_regress_lib.csv")
+        df = df.rename(columns={'t':'census'})
 
-        # Empirical BCI data (all):
-        df = pd.read_csv("../../data/BCI_regression_library.csv")
-        df = df.rename(columns={'species': 'Species_ID',
-                                'TreeID': 'Tree_ID'})
+        # # Empirical BCI data (all):
+        # df = pd.read_csv("../../data/BCI_regression_library.csv")
+        # df = df.rename(columns={'species': 'Species_ID',
+        #                         'TreeID': 'Tree_ID'})
 
         # IMPORTANT! Change the location where the coefficients are saved when a different data set is used!
 

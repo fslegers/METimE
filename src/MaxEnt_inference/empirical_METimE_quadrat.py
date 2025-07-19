@@ -1,3 +1,5 @@
+from token import N_TOKENS
+
 import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
@@ -213,8 +215,8 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
                        10 / bounds_dn[1],
                        10 / bounds_de[1]]
 
-    bounds = [(0, None),
-              (0, None),
+    bounds = [(None, None),
+              (None, None),
               (bounds_dn[0] * scaling_factors[2], bounds_dn[1] * scaling_factors[2]),
               (bounds_de[0] * scaling_factors[3], bounds_de[1] * scaling_factors[3])]
 
@@ -404,6 +406,10 @@ def check_constraints(lambdas, input, functions, alphas, betas):
 def get_empirical_RAD(file, census):
     # Load relevant data
     df = pd.read_csv(file)
+
+    if 'census' not in df.columns:
+        df = df.rename(columns={'t': 'census', 'Species_ID': 'species'})
+
     df = df[df['census'] == census]
     df = df[['species', 'n']].drop_duplicates()
 
@@ -549,7 +555,9 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
     plt.tight_layout()
     plt.grid(True, which="both", ls="--", linewidth=0.5)
     # plt.show()
-    plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{ext}/{model}_{census}.png')
+    # plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{ext}/{model}_{census}.png')
+    plt.savefig(
+        f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_{model}_{census}.png')
 
     results_data = {
         'RMSE': [rmse],
@@ -560,6 +568,7 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
     for i, lam in enumerate(lambdas):
         results_data[f'lambda_{i}'] = [lam]
 
+
     for constr, error in zip(['N/S', 'E/S', 'dN', 'dE'], constraint_errors):
         results_data[f'{constr}'] = error
 
@@ -567,13 +576,28 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
     results_df = pd.DataFrame(results_data)
 
     # Save to CSV (same name as PNG but .csv extension)
-    results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{ext}{model}_{census}.csv', index=False)
-
+    # results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{ext}{model}_{census}.csv', index=False)
+    results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_{model}_{census}.png')
 
 if __name__ == "__main__":
     ext = ''
-    input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
+    #input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
+    input = pd.read_csv(f'../../data/simulated_BCI_regress_lib.csv')
     functions = get_functions()
+    
+    if 'census' not in input.columns:
+        input = input.rename(columns={'t': 'census', 'S': 'S_t', 'N': 'N_t', 'E': 'E_t'})
+
+        # Get only one row per census (e.g., the first one)
+        census_df = input.drop_duplicates(subset='census', keep='first').sort_values('census')
+
+        # Compute dN and dE
+        census_df['dN'] = census_df['N_t'].diff().shift(-1)  # N(t+1) - N(t)
+        census_df['dE'] = census_df['E_t'].diff().shift(-1)  # E(t+1) - E(t)
+
+        # If you want to merge back to original input
+        input = input.merge(census_df[['census', 'dN', 'dE']], on='census', how='left')
+        input = input.dropna(subset=['dN', 'dE'])
 
     for census in input['census'].unique():
         print(f"\n Census: {census} \n")
@@ -590,16 +614,25 @@ if __name__ == "__main__":
             'dE': input_census['dE'].unique()[0]
         }
 
+        # alphas = pd.read_csv(
+        #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI{ext}/METimE_dn_global.csv')[
+        #     'Coefficient'].values
+
         alphas = pd.read_csv(
-            f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI{ext}/METimE_dn_global.csv')[
+            f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/simulated_BCI/METimE_dn_global.csv')[
             'Coefficient'].values
 
+        # betas = pd.read_csv(
+        #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI{ext}/METimE_de_global.csv')[
+        #     'Coefficient'].values
+
         betas = pd.read_csv(
-            f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI{ext}/METimE_de_global.csv')[
+            f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/simulated_BCI/METimE_de_global.csv')[
             'Coefficient'].values
         
         # Get empirical rank abundance distribution
-        empirical_rad = get_empirical_RAD(f'../../data/BCI_regression_library{ext}.csv', census)['abundance']
+        # empirical_rad = get_empirical_RAD(f'../../data/BCI_regression_library{ext}.csv', census)['abundance']
+        empirical_rad = get_empirical_RAD(f'../../data/simulated_BCI_regress_lib.csv', census)['abundance']
 
         # Make initial guess
         initial_lambdas = make_initial_guess(X)

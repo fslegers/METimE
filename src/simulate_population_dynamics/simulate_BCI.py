@@ -3,33 +3,17 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import fsolve
 from src.MaxEnt_inference import zero_point_METE
-#from mpmath import log, exp
-import seaborn as sns
-from scipy.integrate import odeint
 import sys
 import os
-from sklearn.linear_model import ElasticNet
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-
-def g(n, e, X, p):
-    return p['w'] * e**(2/3) - p['w1'] * e
-
-
-def g_wrapper(e, t, n, X, p):
-    return g(n, e, X, p)
-
 
 def partition_function_given_n(X, n, lambdas):
     return (np.exp(-lambdas[0] * n) - np.exp(-lambdas[0] * n - X['E'] * lambdas[1] * n)) / (lambdas[1] * n)
 
 
 def get_SAD(lambdas, X):
+    """ Calculates species abundance distribution from Lagrange multipliers """
     l1, l2 = lambdas
     S, N, E = int(X['S']), int(X['N']), X['E']
     n = np.arange(1, N + 1)
@@ -55,6 +39,7 @@ def cum_SAD(lambdas, X):
 
 
 def sample_community(X):
+    """ Samples community that follows abundance and metabolic rate distributions as predicted by METE """
     # Add beta value
     beta_constraint = lambda b, X: b * np.log(1 / (1 - np.exp(-b))) - X['S'] / X['N']
     beta = fsolve(beta_constraint, 0.0001, args=X)[0]
@@ -77,7 +62,6 @@ def sample_community(X):
     species_indices = np.cumsum(populations)
     species_indices = np.concatenate(([0], species_indices))
 
-
     # Sample individual metabolic rates
     individuals = []
     for pop in populations:
@@ -85,7 +69,7 @@ def sample_community(X):
         CDF_inverse = lambda u: -(np.log(1 - Z_n * lambdas[1] * n * u * np.exp(lambdas[0] * n)))/(lambdas[1] * n)
         u_samples = np.random.uniform(0, 1, pop)
         samples = [float(CDF_inverse(u).real) for u in u_samples] # checked: there is no imaginary part
-        while np.isnan(samples).any():                                                                                  # TODO: might be stuck for a very long time
+        while np.isnan(samples).any():
             u_samples = np.random.uniform(0, min(1, 1/(Z_n * lambdas[1] * n * np.exp(lambdas[0] * n))), pop)
             samples = [float(CDF_inverse(u).real) for u in u_samples]
         individuals += samples
@@ -160,57 +144,61 @@ def sample_community(X):
 #
 #     return metabolic_rates, species_indices, tree_id_list, tree_id, X
 
+# def solve_metabolic(e, n, X, param, t_span, dt=0.1):
+#     sol = odeint(g_wrapper, e, t_span, args=(n, X, param))
+#     return float(sol[-1])
+#
+# def update_metabolic_rates(community, X, time_until_event, param):
+#     t_span = np.array([0, time_until_event])
+#     e_array = community['e'].values
+#     n_array = community['n'].values
+#
+#     args_list = [(e_array[i], n_array[i], X, param, t_span)
+#                  for i in range(len(e_array))]
+#
+#     with ThreadPoolExecutor() as executor:
+#         new_e = list(executor.map(lambda args: solve_metabolic(*args), args_list))
+#
+#     community['e'] = new_e
+#     X['E'] = np.sum(new_e)
+#     return community, X
 
-def update_metabolic_rates(community, X, time_until_event, param):
-    # Solve ODE for each individual's metabolic rate
-    new_e = []
-    for idx, row in community.iterrows():
-        e = row['e']
-        n = row['n']
-        t_span = np.array([0, time_until_event])
-        sol = odeint(g_wrapper, e, t_span, args=(
-        n, X, param))
 
-        if np.isnan(float(sol[-1])):
-            print("SOMETHING WENT WRONG")
-            new_e.append(e)
-
-        new_e.append(float(sol[-1]))
+def update_metabolic_rates(community, X, dt, param):
+    """ Euler method to update metabolic rates """
+    e = community['e'].values
+    de_dt = np.maximum(0, param['w'] * e ** (2 / 3) - param['w1'] * e)
+    new_e = e + dt * de_dt
     community['e'] = new_e
-    return community
+    X['E'] = np.sum(new_e)
+    return community, X
 
 
 def update_event_rates(community, X, p):
+    """ Compute birth and death rates """
     birth_rates = p['b'] * community['n'] * (community['e'] ** (-1/3))
     death_rates = p['d'] * (X['E'] / p['Ec']) * community['n'] * (community['e'] ** (-1/3))
-    migration_rates = np.full(len(community), p['m'] / X['N'])
-    R = birth_rates.sum() + death_rates.sum() + migration_rates.sum()
-    return birth_rates, death_rates, migration_rates, R
+    R = birth_rates.sum() + death_rates.sum()
+    return birth_rates, death_rates, R
 
 
-def what_event_happened(birth_rates, death_rates, migration_rates, R, q):
-    event_rates = np.concatenate([birth_rates, death_rates, migration_rates])
+def what_event_happened(birth_rates, death_rates, R, q):
+    event_rates = np.concatenate([birth_rates, death_rates])
     cumulative_rates = np.cumsum(event_rates)
-
-    if np.isnan(cumulative_rates).any():
-        print("NaN detected in cumulative_rates")
 
     index = np.searchsorted(cumulative_rates, q * R)
 
     if index < len(birth_rates):
         return ('birth', index)
-    elif index < len(birth_rates) + len(death_rates):
-        return ('death', index - len(birth_rates))
     else:
-        return ('migration', index - len(birth_rates) - len(death_rates))
+        return ('death', index - len(birth_rates))
 
 
 def perform_event(community, X, event_info):
-    #print(event_info)
     event_type, idx = event_info
     S, N, E = X['S'], X['N'], X['E']
 
-    if (event_type == 'birth') or (event_type == 'migration'):
+    if (event_type == 'birth'):
         # Create a new individual
         new_tree_id = community['Tree_ID'].max() + 1
         species_id = community.iloc[idx]['Species_ID']
@@ -233,7 +221,6 @@ def perform_event(community, X, event_info):
     else: # event_type == 'death':
         species_id = community.iloc[idx]['Species_ID']
         e_value = community.iloc[idx]['e']
-        #print(f"Removed e: {e_value}")
 
         # Remove individual
         community = community.drop(index=idx).reset_index(drop=True)
@@ -247,44 +234,45 @@ def perform_event(community, X, event_info):
         if not (community['Species_ID'] == species_id).any():
             S -= 1
 
-    # elif event_type == 'migration':
-    #     # Create a new species (new Species_ID)
-    #     new_tree_id = community['Tree_ID'].max() + 1
-    #     n = community.iloc[idx]['n']
-    #
-    #     new_individual = pd.DataFrame({
-    #         'Tree_ID': [new_tree_id],
-    #         'Species_ID': [new_species_id],
-    #         'e': [1],
-    #         'n': [1]
-    #     })
-    #     community = pd.concat([community, new_individual], ignore_index=True)
-    #
-    #     S += 1
-    #     N += 1
-    #     E += 1  # assume e = 1
+    X['S'] = community['Species_ID'].nunique() # shouldn't be necessary but something went wrong with X['S']
+    X['E'], X['N'] = E, N
 
-    return community, S, N, E
+    return community, X
 
 
-def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-04, obs_interval=1e-06):
-    # Species_ID
-    species_ids = np.zeros(species_indices[-1], dtype=int)
+def plot_community_histograms(community, X, t):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Histogram for 'e'
+    axes[0].hist(community['e'], bins=20, color='skyblue', edgecolor='black')
+    axes[0].set_title('Histogram of e')
+    axes[0].set_xlabel('e')
+    axes[0].set_ylabel('Frequency')
+
+    # Histogram for 'n'
+    axes[1].hist(community['n'], bins=20, color='salmon', edgecolor='black')
+    axes[1].set_title('Histogram of n')
+    axes[1].set_xlabel('n')
+    axes[1].set_ylabel('Frequency')
+
+    # Main title with observation time
+    fig.suptitle(f'Community Metabolic State at Time {t}', fontsize=14)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.show()
+
+
+def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, obs_interval):
+    # some preparations
+    species_ids = np.zeros(int(species_indices[-1]), dtype=int)
     for i in range(1, len(species_indices)):
         start = species_indices[i - 1]
         end = species_indices[i]
         species_ids[start:end] = i
 
-    # Prepare saving results
-    output_file = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
-    with open(output_file, 'w') as f:
-        f.write(','.join(['Tree_ID', 'Species_ID', 'e', 'n', 'S', 'N', 'E', 't']) + '\n')
-
-    # Get observation times
     observation_times = np.arange(0, t_max, obs_interval)
     obs_pointer = 0
 
-    # Get df of individuals
+    # create df of individual trees
     community = pd.DataFrame({
         'Tree_ID': tree_id_list,
         'Species_ID': species_ids,
@@ -295,19 +283,12 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-04,
     # Delete some things
     del(tree_id_list, species_ids, species_indices, metabolic_rates)
 
-    S = community['Species_ID'].nunique()
-    N = community['Tree_ID'].nunique()
-    E = community['e'].sum()
+    # Compute state variables and event rates
+    X = {'S': community['Species_ID'].nunique(), 'N': community['Tree_ID'].nunique(), 'E': community['e'].sum()}
+    birth_rates, death_rates, R = update_event_rates(community, X, p)
 
-    # Compute Birth, Death, Migration rates
-    birth_rates = p['b'] * community['n'] * community['e'] ** (-1 / 3)
-    death_rates = p['d'] * E / p['Ec'] * community['n'] * community['e'] ** (-1 / 3)
-    migration_rates = np.full(len(community), p['m'] / N)
-
-    birth_rates = p['b'] * community['n'] * community['e'] ** (-1 / 3)
-    death_rates = p['d'] * E / p['Ec'] * community['n'] * community['e'] ** (-1 / 3)
-    migration_rates = pd.Series(np.full(len(community), p['m'] / N), index=community.index)
-    R = (birth_rates + death_rates + migration_rates).sum()
+    # Store snapshots here
+    snapshots = []
 
     # Start simulation
     t = 0
@@ -315,83 +296,46 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=1e-04,
         # Sample event time
         u = np.random.uniform(0, 1)
         time_until_event = -np.log(u) / R
-        #print(f"Time until event: {time_until_event}")
         t += time_until_event
         print(t)
 
-        # In case the event happens *after* the current observation time
+        # In case the event happens *after* the current observation time, save a snapshot of the community
         while obs_pointer < len(observation_times) and t > observation_times[obs_pointer]:
             # Save snapshot
             snapshot = community[['Tree_ID', 'Species_ID', 'e', 'n']].copy()
-            snapshot['S'] = community['Species_ID'].nunique()
-            snapshot['N'] = community['Tree_ID'].nunique()
-            snapshot['E'] = community['e'].sum()
+            snapshot['S'] = X['S']
+            snapshot['N'] = X['N']
+            snapshot['E'] = X['E']
             snapshot['t'] = observation_times[obs_pointer]
-            snapshot.to_csv(output_file, mode='a', header=False, index=False)
+            snapshots.append(snapshot)
+            del(snapshot)
+
+            # Plot histogram of n and e
+            plot_community_histograms(community, X, observation_times[obs_pointer])
 
             # Progress observation time
-            #print('new observation time')
             obs_pointer += 1
 
         if obs_pointer >= len(observation_times):
             break
 
         # Update individual metabolic rates
-        community = update_metabolic_rates(community, {'S': S, 'N': N, 'E': E}, time_until_event, p)
-        birth_rates, death_rates, migration_rates, R = update_event_rates(community, {'S': S, 'N': N, 'E': E}, p)
+        community, X = update_metabolic_rates(community, X, time_until_event, p)
 
-        # Sample event
+        # Update event rates based on new metabolic rates e
+        birth_rates, death_rates, R = update_event_rates(community, X, p)
+
+        # Determine what event (birth or death) happened
         q = np.random.uniform(0, 1)
-        event = what_event_happened(birth_rates, death_rates, migration_rates, R, q)
-        community, S, N, E = perform_event(community, {'S': S, 'N': N, 'E': E}, event)
+        event = what_event_happened(birth_rates, death_rates, R, q)
+        community, X = perform_event(community, X, event)
 
-        # TODO: now we don't use a unique treeID for when trees are born
+    output_file = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
+    pd.concat(snapshots, ignore_index=True).to_csv(output_file, index=False)
 
+    # TODO: generate a unique treeID for when trees are born
 
-# def do_polynomial_regression(X, y, census, species, transition_function):
-#     # TODO: this should be a summation over the individuals of a species,
-#     #  so a summation of some of the rows in X
-#
-#     #model = LinearRegression()
-#     model = ElasticNet()
-#
-#     # Remove outliers from the data set
-#     threshold = 3
-#     z_scores = np.abs(stats.zscore(X))
-#     outliers = (z_scores > threshold)
-#     outlier_indices = np.where(outliers.any(axis=1))[0]
-#     #X, y = X.drop(outlier_indices, axis=0), y.drop(outlier_indices, axis=0)
-#     keep_indices = np.setdiff1d(np.arange(len(X)), outlier_indices)
-#     X = X.iloc[keep_indices]
-#     y = y.iloc[keep_indices]
-#     species = species.iloc[keep_indices]
-#     print(f"Number of outliers removed: {len(outlier_indices)}")
-#
-#     # Error on training set
-#     model.fit(X, y)
-#     y_pred = model.predict(X)
-#
-#     return y, y_pred, species
-
-
-# def set_up_regression(df):
-#     # Single observation interval
-#     all_census = sorted(df['census'].unique())
-#     reduced_census = deepcopy(all_census)[::150]
-#
-#     # Filter to current censuses
-#     df_filtered = df[df['census'].isin(reduced_census)].copy().reset_index(drop=True)
-#
-#     # Recompute dn, dN, dS
-#     df_deltas = compute_deltas(df_filtered, 'LV').reset_index(drop=True)
-#
-#     # METimE regression
-#     cols_to_exclude = ['dN', 'n_next', 'N_next', 'S_next']
-#     df_for_setup = df_deltas.drop(columns=cols_to_exclude)
-#     X, y, census, species = polynomial_regression.set_up_library(df_for_setup, 3, False, False, False)
-#     #transition_functions = polynomial_regression.METimE(X, y, census, fig_title=f"")
-#
-#     return X, y, census, species
+    return community, X
 
 
 def plot_observed_vs_predicted(obs, pred, title, species=None):
@@ -427,52 +371,12 @@ def plot_observed_vs_predicted(obs, pred, title, species=None):
     plt.show()
 
 
-def k_means_clustering(df, ncluster):
-    # Step 1: Load your DataFrame (assuming it's already loaded as `df`)
-    cols_to_summarize = ['dn']
-
-    # Step 2: Compute summary stats per species
-    summary = df.groupby('species')[cols_to_summarize].agg(['mean', 'std', 'median']).reset_index()
-
-    # Flatten MultiIndex columns
-    summary.columns = ['species'] + [f"{col}_{stat}" for col in cols_to_summarize for stat in ['mean', 'std', 'median']]
-    summary.fillna(0, inplace=True)
-
-    # Step 3: Standardize the features
-    X = summary.drop(columns='species')
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    # Step 4: Run K-Means Clustering (choose 2 or 3 clusters)
-    kmeans = KMeans(n_clusters=ncluster, random_state=42)
-    summary['cluster'] = kmeans.fit_predict(X_scaled)
-
-    # # Step 5: Visualize clusters (using first two PCA components or just two features)
-    # sns.scatterplot(data=summary, x='n_mean', y='n_std', hue='cluster', palette='viridis')
-    # plt.title('Species Clustering Based on Summary Stats')
-    # plt.xlabel('Mean n')
-    # plt.ylabel('Std Dev n')
-    # plt.show()
-
-    sns.scatterplot(data=summary, x='dn_mean', y='dn_std', hue='cluster', palette='viridis')
-    plt.title('Species Clustering Based on Summary Stats')
-    plt.xlabel('Mean dn')
-    plt.ylabel('Std Dev dn')
-    plt.show()
-
-    # Step 6: Merge cluster labels back to the original DataFrame
-    df_with_clusters = df.merge(summary[['species', 'cluster']], on='species', how='left')
-
-    # Optional: Save result
-    # df_with_clusters.to_csv("df_with_species_clusters.csv", index=False)
-    return df_with_clusters
-
-
 def start_from_METE():
-    param = {  # from Micahs dissertation
-        'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10 ** 6, 'm': 437.3,
-        'w': 1.0, 'w1': 0.42, 'mu_meta': 0.0215
-    }
+    # Original values (from Micahs dissertation)
+    # param = {
+    #     'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10 ** 6, 'm': 437.3,
+    #     'w': 1.0, 'w1': 0.42, 'mu_meta': 0.0215
+    # }
 
     # Changed 'Ec': 2 * 10**7 to 4000 * 10**6
     # and w from 1.0 to 10.0 and w1 from 0.42 to 4.2
@@ -481,20 +385,24 @@ def start_from_METE():
     #     'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
     # }
 
-    # Smaller community than BCI forest
+    # Based on BCI quadrat 0 with other parameters from DynaMETE, made up Ec
+    param = {
+        'b': 0.2, 'd': 0.2, 'Ec': 45000, 'm': 437.3,
+        'w': 1.0, 'w1': 0.42, 'mu_meta': 0.0215
+    }
+
     X = {
-        'E': 5000 * 10 ** 6,
-        'N': 5000,
-        'S': 45,
+        'E': 46000,
+        'N': 160,
+        'S': 55,
         'beta': 0.0001
     }
 
-    # Sample a community
     metabolic_rates, species_indices, tree_id_list = sample_community(X)
     X['S'], X['N'], X['E'] = len(species_indices) - 1, len(metabolic_rates), sum(metabolic_rates)
 
     # Generate trajectories of its state variables
-    gillespie(metabolic_rates, species_indices, tree_id_list, X, param, t_max=0.02, obs_interval=5e-04)
+    community, X = gillespie(metabolic_rates, species_indices, tree_id_list, X, param, t_max=5, obs_interval=0.25)
 
     # Load the CSV file
     file_path = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
@@ -520,105 +428,9 @@ def start_from_METE():
     fig.tight_layout()
     plt.show()
 
-
-def start_from_scratch():
-    param = {
-        'b': 0.2, 'd': 0.2, 'Ec': 5000 * 10 ** 6, 'm': 437.3,
-        'w': 1.0, 'w1': 0.42, 'mu_meta': 0.02
-    }
-
-    X_meta = {                                                                                                          # from Micahs dissertation
-        'E': 2.04 * 10**7, 'N': 2.3 * 10**5, 'S': 320, 'beta': 0.0001
-    }
-
-    # Sample a meta community
-    _, meta_species, _ = sample_community(X_meta)
-
-    # TODO: run Gillepsie, but with a different type of migration.
-
-    # Load the CSV file
-    file_path = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_dynaMETE_snapshots.csv"
-    df = pd.read_csv(file_path)
-
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    # Left y-axis: N
-    ax1.plot(df['t'], df['N'], color='tab:green', marker='s', label='N (Abundance)')
-    ax1.set_ylabel('N (Abundance)', color='tab:green')
-    ax1.tick_params(axis='y', labelcolor='tab:green')
-
-    # Right y-axis: E
-    ax2 = ax1.twinx()
-    ax2.plot(df['t'], df['E'], color='tab:red', marker='^', label='E (Energy)')
-    ax2.set_ylabel('E (Energy)', color='tab:red')
-    ax2.tick_params(axis='y', labelcolor='tab:red')
-
-    # X-axis and common formatting
-    ax1.set_xlabel('Time')
-    plt.title('Trajectories of N and E')
-    ax1.grid(True)
-    fig.tight_layout()
-    plt.show()
-
-# def do_regression(df):
-#     all_census = sorted(df['census'].unique())
-#     reduced_census = deepcopy(all_census)
-#     iteration = 1
-#
-#     while len(reduced_census) >= 2:
-#         print(f"\n--- Iteration {iteration} ---")
-#         print(f"Censuses used: {len(reduced_census)}")
-#
-#         # Filter to current censuses
-#         df_filtered = df[df['census'].isin(reduced_census)].copy().reset_index(drop=True)
-#
-#         # Recompute dn, dN, dS
-#         df_deltas = compute_deltas(df_filtered, 'BCI').reset_index(drop=True)
-#
-#         # METimE regression
-#         cols_to_exclude = ['species', 'dN', 'dE', 'n_next', 'e_next', 'N_next', 'E_next', 'S_next']
-#         df_for_setup = df_deltas.drop(columns=cols_to_exclude)
-#         X, y, census = bilinear_regression.set_up_library(df_for_setup, 3, False, False, False)
-#         _ = bilinear_regression.METimE(X, y, census, fig_title=f"simulated_METimE_interval_{iteration}")
-#
-#         # Update census list by removing every second census
-#         reduced_census = reduced_census[::2]
-#         iteration += 1
-#
-#     pass
-
-
-# def fit_dynaMETE(df):
-#     all_census = sorted(df['census'].unique())
-#     reduced_census = deepcopy(all_census)
-#     iteration = 1
-#
-#     while len(reduced_census) >= 2:
-#         print(f"\n--- Iteration {iteration} ---")
-#         print(f"Censuses used: {len(reduced_census)}")
-#
-#         # Filter to current censuses
-#         df_filtered = df[df['census'].isin(reduced_census)].copy().reset_index(drop=True)
-#
-#         # Recompute dn, dN, dS
-#         df_deltas = compute_deltas(df_filtered, 'LV').reset_index(drop=True)
-#
-#         # METimE regression
-#         cols_to_exclude = ['species', 'dN', 'dE', 'n_next', 'e_next', 'N_next', 'E_next', 'S_next']
-#         df = df_deltas.drop(columns=cols_to_exclude)
-#
-#         df = add_beta(df, 'BCI')
-#
-#         initial_guess = [0.2, 0.2, 30000000, 500, 1.0, 0.4096, 0.0219, 1, 250000, 1]
-#
-#         _ = do_least_squares(initial_guess, df, 'BCI')
-#
-#         # Update census list by removing every second census
-#         reduced_census = reduced_census[::2]
-#         iteration += 1
-#
-#     pass
-
+    """
+    Metabolic growth is positive only for e < (p['w'] / p['w1'])^3 = 13.5
+    """
 
 if __name__ == '__main__':
-    start_from_scratch()
+    start_from_METE()

@@ -7,16 +7,14 @@ import sdeint
 from copy import deepcopy
 import sys
 import os
-import warnings
 
-from sklearn.linear_model import ElasticNet, Lasso, LinearRegression
+from sklearn.linear_model import LinearRegression
 from matplotlib.patches import Patch
 from sklearn.metrics import r2_score
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from tests.regression_on_simulation_dynamics import compute_deltas
 
-#warnings.filterwarnings("ignore")
 
 def f(n, t, growth_rates, alpha):
     return n * growth_rates * (1 - alpha @ n)
@@ -324,6 +322,103 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
         return growth_rates, A, initial_conditions
 
 
+    def krikorian_food_chain():
+        growth_rates = np.ones(30) + np.random.normal(0, var, 30)
+
+        # Inter-group competition with per-individual variability
+        A[group_indices['Y'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Y
+        A[group_indices['Z'], group_indices['Y']] = 1 + np.random.normal(0, var,(group_size, group_size)) # Y on Z
+
+        # Intra-group competition: still per-individual (diagonal within group block)
+        for group in group_indices.values():
+            diag_indices = np.diag_indices_from(A[group, group])
+            A[group, group][diag_indices] = 1.5 + np.random.normal(0, var, group_size)
+
+        # Initial populations with variability per individual
+        initial_conditions = np.random.uniform(0, 1.0, 30)
+
+        initial_conditions /= np.sum(initial_conditions)
+
+        return growth_rates, A, initial_conditions
+
+    def two_predators_one_prey():
+        growth_rates = np.ones(30) + np.random.normal(0, var, 30)
+
+        # Inter-group competition with per-individual variability
+        A[group_indices['Z'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Z
+        A[group_indices['Z'], group_indices['Y']] = 1 + np.random.normal(0, var,(group_size, group_size)) # Y on Z
+
+        # Intra-group competition: still per-individual (diagonal within group block)
+        for group in group_indices.values():
+            diag_indices = np.diag_indices_from(A[group, group])
+            A[group, group][diag_indices] = 1.5 + np.random.normal(0, var, group_size)
+
+        # Initial populations with variability per individual
+        initial_conditions = np.random.uniform(0, 1.0, 30)
+
+        initial_conditions /= np.sum(initial_conditions)
+
+        return growth_rates, A, initial_conditions
+
+    def one_predator_two_prey():
+        growth_rates = np.ones(30) + np.random.normal(0, var, 30)
+
+        # Inter-group competition with per-individual variability
+        A[group_indices['Y'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Y
+        A[group_indices['Z'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Z
+
+        # Intra-group competition: still per-individual (diagonal within group block)
+        for group in group_indices.values():
+            diag_indices = np.diag_indices_from(A[group, group])
+            A[group, group][diag_indices] = 1.5 + np.random.normal(0, var, group_size)
+
+        # Initial populations with variability per individual
+        initial_conditions = np.random.uniform(0, 1.0, 30)
+
+        initial_conditions /= np.sum(initial_conditions)
+
+        return growth_rates, A, initial_conditions
+
+    def omnivory_food_chain():
+        growth_rates = np.ones(30) + np.random.normal(0, var, 30)
+
+        # Inter-group competition with per-individual variability
+        A[group_indices['Y'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Y
+        A[group_indices['Z'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Z
+        A[group_indices['Z'], group_indices['Y']] = 1 + np.random.normal(0, var, (group_size, group_size))  # Y on Z
+
+        # Intra-group competition: still per-individual (diagonal within group block)
+        for group in group_indices.values():
+            diag_indices = np.diag_indices_from(A[group, group])
+            A[group, group][diag_indices] = 1.5 + np.random.normal(0, var, group_size)
+
+        # Initial populations with variability per individual
+        initial_conditions = np.random.uniform(0, 1.0, 30)
+
+        initial_conditions /= np.sum(initial_conditions)
+
+        return growth_rates, A, initial_conditions
+
+    def krikorian_cycle():
+        growth_rates = np.ones(30) + np.random.normal(0, var, 30)
+
+        # Inter-group competition with per-individual variability
+        A[group_indices['Y'], group_indices['X']] = 1 + np.random.normal(0, var,(group_size, group_size)) # X on Y
+        A[group_indices['Z'], group_indices['Y']] = 1 + np.random.normal(0, var,(group_size, group_size)) # Y on Z
+        A[group_indices['X'], group_indices['Z']] = 1 + np.random.normal(0, var, (group_size, group_size))  # Z on X
+
+        # Intra-group competition: still per-individual (diagonal within group block)
+        for group in group_indices.values():
+            diag_indices = np.diag_indices_from(A[group, group])
+            A[group, group][diag_indices] = 1.5 + np.random.normal(0, var, group_size)
+
+        # Initial populations with variability per individual
+        initial_conditions = np.random.uniform(0, 1.0, 30)
+
+        initial_conditions /= np.sum(initial_conditions)
+
+        return growth_rates, A, initial_conditions
+
     def f_wrapped(n, t):
         return f(n, t, growth_rates, A)
 
@@ -342,9 +437,18 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
         growth_rates, A, initial_conditions = cleaner_fish()
     elif model_func == "resource_competition":
         growth_rates, A, initial_conditions = resource_competition()
+    elif model_func == "krikorian_food_chain":
+        growth_rates, A, initial_conditions = krikorian_food_chain()
+    elif model_func == "two_predators_one_prey":
+        growth_rates, A, initial_conditions = two_predators_one_prey()
+    elif model_func == "one_predator_two_prey":
+        growth_rates, A, initial_conditions = one_predator_two_prey()
+    elif model_func == "omnivory_food_chain":
+        growth_rates, A, initial_conditions = omnivory_food_chain()
+    elif model_func == "krikorian_cycle":
+        growth_rates, A, initial_conditions = krikorian_cycle()
     else:
         print("Invalid model")
-
 
     # Solve stochastic ode but ensure that populations don't become non-negative
     tspan = np.linspace(0, T, int(T * 100))
@@ -363,6 +467,8 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
     solutions = np.array(solutions)  # shape: (timesteps, 30)
     solutions = solutions * N  # scale up populations
 
+    plot_solutions(solutions, tspan, model_func)
+
     #plot_solutions(solutions, tspan, model_func)
     df = create_df(solutions)
 
@@ -380,7 +486,7 @@ def do_polynomial_regression(df, LV_model, var, regression_type='global', cluste
     X = df.drop(columns='dn')
 
     # Compute polynomial features
-    poly = PolynomialFeatures(degree=2, include_bias=True)
+    poly = PolynomialFeatures(degree=3, include_bias=True)
     X_poly = poly.fit_transform(X)
     feature_names = poly.get_feature_names_out(X.columns)
 
@@ -537,21 +643,21 @@ def get_metrics(model, var, T=30, repetitions=1):
         results_r2['species_specific'].append(np.nanmean(species_r2))
         #results_adj_r2['species_specific'].append(np.nanmean(species_adj_r2))
 
-        # -------- CLUSTERED REGRESSION --------
-        df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
-        X_clustered = get_cluster_state_variables(df)
-        cluster_r2, cluster_adj_r2 = [], []
-        for cluster in df['cluster'].unique():
-            df_cluster = df[df['cluster'] == cluster]
-            obs, pred = set_up_regression(df_cluster.drop(columns=['cluster']), var, X_clustered, regression_type="clustered", cluster=cluster, LV_model=model)
-            obs = obs.tolist()
-            pred = pred.tolist()
-            r2 = r2_score(obs, pred)
-            #adj_r2 = adjusted_r2_score(r2, len(obs), X.shape[1])
-            cluster_r2.append(r2)
-            #cluster_adj_r2.append(adj_r2)
-        results_r2['clustered'].append(round(np.nanmean(cluster_r2), 3))
-        #results_adj_r2['clustered'].append(round(np.nanmean(cluster_adj_r2), 3))
+        # # -------- CLUSTERED REGRESSION --------
+        # df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
+        # X_clustered = get_cluster_state_variables(df)
+        # cluster_r2, cluster_adj_r2 = [], []
+        # for cluster in df['cluster'].unique():
+        #     df_cluster = df[df['cluster'] == cluster]
+        #     obs, pred = set_up_regression(df_cluster.drop(columns=['cluster']), var, X_clustered, regression_type="clustered", cluster=cluster, LV_model=model)
+        #     obs = obs.tolist()
+        #     pred = pred.tolist()
+        #     r2 = r2_score(obs, pred)
+        #     #adj_r2 = adjusted_r2_score(r2, len(obs), X.shape[1])
+        #     cluster_r2.append(r2)
+        #     #cluster_adj_r2.append(adj_r2)
+        # results_r2['clustered'].append(round(np.nanmean(cluster_r2), 3))
+        # #results_adj_r2['clustered'].append(round(np.nanmean(cluster_adj_r2), 3))
 
     # Convert to DataFrames: one row per treatment, one column per model-variance
     index = ['global', 'species_specific', 'clustered']
@@ -567,15 +673,15 @@ if __name__ == "__main__":
     all_r2 = []
     all_adj_r2 = []
 
-    for model in ['constant',
-                  'food_web',
-                  'cascading_food_web',
-                  'cyclic',
-                  'cleaner_fish',
-                  'resource_competition']:
+    for model in ['krikorian_food_chain',
+                  'two_predators_one_prey',
+                  'one_predator_two_prey',
+                  'omnivory_food_chain',
+                  'krikorian_cycle']:
+
     # for model in ['constant']:
         #for var in [0.0, 0.05, 0.1, 0.5]:
-        for var in [0.1]:
+        for var in [0.25]:
             df = three_groups_LV(model, T=30, var=var)
 
             # do global regression
