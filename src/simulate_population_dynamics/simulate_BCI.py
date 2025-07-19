@@ -311,7 +311,7 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, obs_i
             del(snapshot)
 
             # Plot histogram of n and e
-            plot_community_histograms(community, X, observation_times[obs_pointer])
+            #plot_community_histograms(community, X, observation_times[obs_pointer])
 
             # Progress observation time
             obs_pointer += 1
