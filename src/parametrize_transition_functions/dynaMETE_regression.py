@@ -9,7 +9,7 @@ from matplotlib.patches import Patch
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from src.MaxEnt_inference.METE_no_integrals import make_initial_guess, perform_optimization
+from src.MaxEnt_inference.vanilla_METE import make_initial_guess, perform_optimization
 
 def f(n, e, X, p):
     return (p['b'] - p['d'] * X['E']/p['Ec']) * n / e**(1/3) + p['m'] * n / X['N']

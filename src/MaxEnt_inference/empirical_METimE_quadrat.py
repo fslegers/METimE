@@ -1,17 +1,10 @@
-from token import N_TOKENS
-
 import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
 from scipy.integrate import quad
-from scipy.interpolate import interp1d
-from concurrent.futures import ProcessPoolExecutor
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import plotly.graph_objects as go
-import time
-import METE_no_integrals
-from sklearn.metrics import mean_squared_error
+from src.MaxEnt_inference import vanilla_METE
+from sklearn.metrics import mean_absolute_error
 from scipy.stats import rv_discrete
 import mpmath as mp
 
@@ -67,12 +60,21 @@ def exp_in_R(n, e, X, functions, lambdas, alphas, betas, scaling_factors=[1, 1, 
 
 def partition_function(lambdas, functions, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
     def integrand(e, n):
-        exponent = sum(-lambdas[i] * functions[i](n, e, X, alphas, betas, scaling_factors) for i in range(len(functions)))
+        exponent = sum(
+            -lambdas[i] * functions[i](n, e, X, alphas, betas, scaling_factors)
+            for i in range(len(functions))
+        )
         return np.exp(exponent)
 
     Z = 0
+    num_bins = 11  # or make this a parameter if you want flexibility
+    edges = (np.linspace(0, 1, num_bins + 1) ** 2) * X['E_t']
+
     for n in range(1, int(X['N_t']) + 1):
-        Z += quad(lambda e: integrand(e, n),  0, X['E_t'])[0]
+        Z += sum(
+            quad(lambda e: integrand(e, n), a, b)[0]
+            for a, b in zip(edges[:-1], edges[1:])
+        )
 
     return Z
 
@@ -121,6 +123,10 @@ def make_initial_guess(X):
     l2 = S / (E - N)
     l1 = beta.root - l2
 
+    if l1 < 0 or l2 < 0: # Assumption based on "Derivations of the Core Functions of METE": l1 and l2 are strictly positive
+        l1 = 0.1         # this assumption comes from somewhere else but not sure where
+        l2 = 0.01
+
     return [l1, l2, 0, 0]
 
 
@@ -130,21 +136,29 @@ def make_initial_guess(X):
 
 def single_constraint(X, f_k, F_k, all_f, lambdas, alphas, betas, scaling_factors=[1, 1, 1, 1]):
     def integrand(e, n):
-        exponent = sum(-lambdas[i] * functions[i](n, e, X, alphas, betas, scaling_factors) for i in range(len(functions)))
-        return np.exp(exponent) * f_k(n, e, X, alphas, betas)
+        exponent = sum(
+            -lambdas[i] * all_f[i](n, e, X, alphas, betas, scaling_factors)
+            for i in range(len(all_f))
+        )
+        return np.exp(exponent) * f_k(n, e, X, alphas, betas, scaling_factors)
 
     Z = partition_function(lambdas, all_f, X, alphas, betas, scaling_factors)
 
     expected_value = 0
     for n in range(1, int(X['N_t']) + 1):
-        expected_value += quad(lambda e: integrand(e, n), 0, X['E_t'])[0]
+        edges = np.linspace(0, 1, 11 + 1) ** 2 * X['E_t']  # quadratic binning
+        expected_value += sum(
+            quad(lambda e: integrand(e, n), a, b)[0]
+            for a, b in zip(edges[:-1], edges[1:])
+        )
     expected_value /= Z
 
     if np.any(np.isnan(expected_value)) or np.any(np.isinf(expected_value)):
         print("Invalid values detected in single constraint")
         expected_value = 1e10
 
-    return (expected_value - F_k) / np.abs(F_k) # TODO: scaled down so that all constraints weigh equally
+    return expected_value - F_k
+    # TODO: optional scaled down so that all constraints weigh equally
 
 
 # def constraint(f_k, lambdas, functions, F_k, X, alphas, betas):
@@ -200,23 +214,24 @@ def compute_bounds(X, alphas, betas):
     else:
         bounds_de = (-400/max_abs_val_de, 400/max_abs_val_de)
 
-    print(f"Bounds for dn: {bounds_dn}")
-    print(f"Bounds for de: {bounds_de}")
+    # print(f"Bounds for dn: {bounds_dn}")
+    # print(f"Bounds for de: {bounds_de}")
 
     return bounds_dn, bounds_de
 
 
-def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
+def run_optimization(lambdas, functions, macro_var, X, alphas, betas):
     # Set bounds and scale all lambas to be of order of magnitude ~10
     bounds_dn, bounds_de = compute_bounds(X, alphas, betas)
 
-    scaling_factors = [10 / lambdas[0],
-                       10 / lambdas[1],
-                       10 / bounds_dn[1],
-                       10 / bounds_de[1]]
+    # scaling_factors = [np.abs(10 / lambdas[0]),
+    #                    np.abs(10 / lambdas[1]),
+    #                    np.abs(10 / bounds_dn[1]),
+    #                    np.abs(10 / bounds_de[1])]
+    scaling_factors = [1, 1, 1, 1]
 
-    bounds = [(None, None),
-              (None, None),
+    bounds = [(0, None),
+              (0, None),
               (bounds_dn[0] * scaling_factors[2], bounds_dn[1] * scaling_factors[2]),
               (bounds_de[0] * scaling_factors[3], bounds_de[1] * scaling_factors[3])]
 
@@ -237,9 +252,9 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
                       lambdas,
                       args=(functions, X, alphas, betas, scaling_factors),
                       constraints=constraints,
-                      bounds=bounds,
+                      bounds=bounds[:len(lambdas)],
                       method="trust-constr",
-                      options={'initial_tr_radius': 0.1,
+                      options={'initial_tr_radius': 0.001,
                                'disp': True,
                                'verbose': 3
                                })
@@ -249,8 +264,10 @@ def perform_optimization(lambdas, functions, macro_var, X, alphas, betas):
     # Revert scaling
     optimized_lambdas[0] /= scaling_factors[0]
     optimized_lambdas[1] /= scaling_factors[1]
-    optimized_lambdas[2] /= scaling_factors[2]
-    optimized_lambdas[3] /= scaling_factors[3]
+
+    if len(optimized_lambdas) == 4:
+        optimized_lambdas[2] /= scaling_factors[2]
+        optimized_lambdas[3] /= scaling_factors[3]
 
     return optimized_lambdas
 
@@ -264,88 +281,209 @@ def f_n(n, e, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
 def f_ne(n, e, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
     return n * e / scaling_factors[1]
 
+# def f_dn(n, e, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
+#     return (
+#     alphas[0] * e +
+#     alphas[1] * n +
+#     alphas[2] * e ** 2 +
+#     alphas[3] * e * X['S_t'] +
+#     alphas[4] * e * n +
+#     alphas[5] * e * X['N_t'] +
+#     alphas[6] * e * X['E_t'] +
+#     alphas[7] * X['S_t'] * n +
+#     alphas[8] * n ** 2 +
+#     alphas[9] * n * X['N_t'] +
+#     alphas[10] * n * X['E_t'] +
+#     alphas[11] * e ** 3 +
+#     alphas[12] * e ** 2 * X['S_t'] +
+#     alphas[13] * e ** 2 * n +
+#     alphas[14] * e ** 2 * X['N_t'] +
+#     alphas[15] * e ** 2 * X['E_t'] +
+#     alphas[16] * e * X['S_t'] ** 2 +
+#     alphas[17] * e * X['S_t'] * n +
+#     alphas[18] * e * X['S_t'] * X['N_t'] +
+#     alphas[19] * e * X['S_t'] * X['E_t'] +
+#     alphas[20] * e * n ** 2 +
+#     alphas[21] * e * n * X['N_t'] +
+#     alphas[22] * e * n * X['E_t'] +
+#     alphas[23] * e * X['N_t'] ** 2 +
+#     alphas[24] * e * X['N_t'] * X['E_t'] +
+#     alphas[25] * e * X['E_t'] ** 2 +
+#     alphas[26] * X['S_t'] ** 2 * n +
+#     alphas[27] * X['S_t'] * n ** 2 +
+#     alphas[28] * X['S_t'] * n * X['N_t'] +
+#     alphas[29] * X['S_t'] * n * X['E_t'] +
+#     alphas[30] * n ** 3 +
+#     alphas[31] * n ** 2 * X['N_t'] +
+#     alphas[32] * n ** 2 * X['E_t'] +
+#     alphas[33] * n * X['N_t'] ** 2 +
+#     alphas[34] * n * X['N_t'] * X['E_t'] +
+#     alphas[35] * n * X['E_t'] ** 2) / scaling_factors[2]
+#
+# def f_de(n, e, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
+#     return (
+#     betas[0] * e +
+#     betas[1] * n +
+#     betas[2] * e ** 2 +
+#     betas[3] * e * X['S_t'] +
+#     betas[4] * e * n +
+#     betas[5] * e * X['N_t'] +
+#     betas[6] * e * X['E_t'] +
+#     betas[7] * X['S_t'] * n +
+#     betas[8] * n ** 2 +
+#     betas[9] * n * X['N_t'] +
+#     betas[10] * n * X['E_t'] +
+#     betas[11] * e ** 3 +
+#     betas[12] * e ** 2 * X['S_t'] +
+#     betas[13] * e ** 2 * n +
+#     betas[14] * e ** 2 * X['N_t'] +
+#     betas[15] * e ** 2 * X['E_t'] +
+#     betas[16] * e * X['S_t'] ** 2 +
+#     betas[17] * e * X['S_t'] * n +
+#     betas[18] * e * X['S_t'] * X['N_t'] +
+#     betas[19] * e * X['S_t'] * X['E_t'] +
+#     betas[20] * e * n ** 2 +
+#     betas[21] * e * n * X['N_t'] +
+#     betas[22] * e * n * X['E_t'] +
+#     betas[23] * e * X['N_t'] ** 2 +
+#     betas[24] * e * X['N_t'] * X['E_t'] +
+#     betas[25] * e * X['E_t'] ** 2 +
+#     betas[26] * X['S_t'] ** 2 * n +
+#     betas[27] * X['S_t'] * n ** 2 +
+#     betas[28] * X['S_t'] * n * X['N_t'] +
+#     betas[29] * X['S_t'] * n * X['E_t'] +
+#     betas[30] * n ** 3 +
+#     betas[31] * n ** 2 * X['N_t'] +
+#     betas[32] * n ** 2 * X['E_t'] +
+#     betas[33] * n * X['N_t'] ** 2 +
+#     betas[34] * n * X['N_t'] * X['E_t'] +
+#     betas[35] * n * X['E_t'] ** 2) / scaling_factors[3]
+
 def f_dn(n, e, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
-    return (
-    alphas[0] * e +
+    """
+    expects coefficients alphas are ordened
+    first, order columns: e, n, S, N, E
+    then, polynomial features, order 3, include_bias=False
+    """
+    return (alphas[0] * e +
     alphas[1] * n +
-    alphas[2] * e ** 2 +
-    alphas[3] * e * X['S_t'] +
-    alphas[4] * e * n +
-    alphas[5] * e * X['N_t'] +
-    alphas[6] * e * X['E_t'] +
-    alphas[7] * X['S_t'] * n +
-    alphas[8] * n ** 2 +
-    alphas[9] * n * X['N_t'] +
-    alphas[10] * n * X['E_t'] +
-    alphas[11] * e ** 3 +
-    alphas[12] * e ** 2 * X['S_t'] +
-    alphas[13] * e ** 2 * n +
-    alphas[14] * e ** 2 * X['N_t'] +
-    alphas[15] * e ** 2 * X['E_t'] +
-    alphas[16] * e * X['S_t'] ** 2 +
-    alphas[17] * e * X['S_t'] * n +
-    alphas[18] * e * X['S_t'] * X['N_t'] +
-    alphas[19] * e * X['S_t'] * X['E_t'] +
-    alphas[20] * e * n ** 2 +
-    alphas[21] * e * n * X['N_t'] +
-    alphas[22] * e * n * X['E_t'] +
-    alphas[23] * e * X['N_t'] ** 2 +
-    alphas[24] * e * X['N_t'] * X['E_t'] +
-    alphas[25] * e * X['E_t'] ** 2 +
-    alphas[26] * X['S_t'] ** 2 * n +
-    alphas[27] * X['S_t'] * n ** 2 +
-    alphas[28] * X['S_t'] * n * X['N_t'] +
-    alphas[29] * X['S_t'] * n * X['E_t'] +
-    alphas[30] * n ** 3 +
-    alphas[31] * n ** 2 * X['N_t'] +
-    alphas[32] * n ** 2 * X['E_t'] +
-    alphas[33] * n * X['N_t'] ** 2 +
-    alphas[34] * n * X['N_t'] * X['E_t'] +
-    alphas[35] * n * X['E_t'] ** 2) / scaling_factors[2]
+    alphas[2] * X['S_t'] +
+    alphas[3] * X['N_t'] +
+    alphas[4] * X['E_t'] +
+    alphas[5] * e ** 2 +
+    alphas[6] * e * n +
+    alphas[7] * e * X['S_t'] +
+    alphas[8] * e * X['N_t'] +
+    alphas[9] * e * X['E_t'] +
+    alphas[10] * n ** 2 +
+    alphas[11] * n * X['S_t'] +
+    alphas[12] * n * X['N_t'] +
+    alphas[13] * n * X['E_t'] +
+    alphas[14] * X['S_t'] ** 2 +
+    alphas[15] * X['S_t'] * X['N_t'] +
+    alphas[16] * X['S_t'] * X['E_t'] +
+    alphas[17] * X['N_t'] ** 2 +
+    alphas[18] * X['N_t'] * X['E_t'] +
+    alphas[19] * X['E_t'] ** 2 +
+    alphas[20] * e ** 3 +
+    alphas[21] * e ** 2 * n +
+    alphas[22] * e ** 2 * X['S_t'] +
+    alphas[23] * e ** 2 * X['N_t'] +
+    alphas[24] * e ** 2 * X['E_t'] +
+    alphas[25] * e * n ** 2 +
+    alphas[26] * e * n * X['S_t'] +
+    alphas[27] * e * n * X['N_t'] +
+    alphas[28] * e * n * X['E_t'] +
+    alphas[29] * e * X['S_t'] ** 2 +
+    alphas[30] * e * X['S_t'] * X['N_t'] +
+    alphas[31] * e * X['S_t'] * X['E_t'] +
+    alphas[32] * e * X['N_t'] ** 2 +
+    alphas[33] * e * X['N_t'] * X['E_t'] +
+    alphas[34] * e * X['E_t'] ** 2 +
+    alphas[35] * n ** 3 +
+    alphas[36] * n ** 2 * X['S_t'] +
+    alphas[37] * n ** 2 * X['N_t'] +
+    alphas[38] * n ** 2 * X['E_t'] +
+    alphas[39] * n * X['S_t'] ** 2 +
+    alphas[40] * n * X['S_t'] * X['N_t'] +
+    alphas[41] * n * X['S_t'] * X['E_t'] +
+    alphas[42] * n * X['N_t'] ** 2 +
+    alphas[43] * n * X['N_t'] * X['E_t'] +
+    alphas[44] * n * X['E_t'] ** 2 +
+    alphas[45] * X['S_t'] ** 3 +
+    alphas[46] * X['S_t'] ** 2 * X['N_t'] +
+    alphas[47] * X['S_t'] ** 2 * X['E_t'] +
+    alphas[48] * X['S_t'] * X['N_t'] ** 2 +
+    alphas[49] * X['S_t'] * X['N_t'] * X['E_t'] +
+    alphas[50] * X['S_t'] * X['E_t'] ** 2 +
+    alphas[51] * X['N_t'] ** 3 +
+    alphas[52] * X['N_t'] ** 2 * X['E_t'] +
+    alphas[53] * X['N_t'] * X['E_t'] ** 2 +
+    alphas[54] * X['E_t'] ** 3 +
+    alphas[55]) / scaling_factors[1]
 
 def f_de(n, e, X, alphas, betas, scaling_factors=[1, 1, 1, 1]):
-    return (
-    betas[0] * e +
+    return (betas[0] * e +
     betas[1] * n +
-    betas[2] * e ** 2 +
-    betas[3] * e * X['S_t'] +
-    betas[4] * e * n +
-    betas[5] * e * X['N_t'] +
-    betas[6] * e * X['E_t'] +
-    betas[7] * X['S_t'] * n +
-    betas[8] * n ** 2 +
-    betas[9] * n * X['N_t'] +
-    betas[10] * n * X['E_t'] +
-    betas[11] * e ** 3 +
-    betas[12] * e ** 2 * X['S_t'] +
-    betas[13] * e ** 2 * n +
-    betas[14] * e ** 2 * X['N_t'] +
-    betas[15] * e ** 2 * X['E_t'] +
-    betas[16] * e * X['S_t'] ** 2 +
-    betas[17] * e * X['S_t'] * n +
-    betas[18] * e * X['S_t'] * X['N_t'] +
-    betas[19] * e * X['S_t'] * X['E_t'] +
-    betas[20] * e * n ** 2 +
-    betas[21] * e * n * X['N_t'] +
-    betas[22] * e * n * X['E_t'] +
-    betas[23] * e * X['N_t'] ** 2 +
-    betas[24] * e * X['N_t'] * X['E_t'] +
-    betas[25] * e * X['E_t'] ** 2 +
-    betas[26] * X['S_t'] ** 2 * n +
-    betas[27] * X['S_t'] * n ** 2 +
-    betas[28] * X['S_t'] * n * X['N_t'] +
-    betas[29] * X['S_t'] * n * X['E_t'] +
-    betas[30] * n ** 3 +
-    betas[31] * n ** 2 * X['N_t'] +
-    betas[32] * n ** 2 * X['E_t'] +
-    betas[33] * n * X['N_t'] ** 2 +
-    betas[34] * n * X['N_t'] * X['E_t'] +
-    betas[35] * n * X['E_t'] ** 2) / scaling_factors[3]
+    betas[2] * X['S_t'] +
+    betas[3] * X['N_t'] +
+    betas[4] * X['E_t'] +
+    betas[5] * e ** 2 +
+    betas[6] * e * n +
+    betas[7] * e * X['S_t'] +
+    betas[8] * e * X['N_t'] +
+    betas[9] * e * X['E_t'] +
+    betas[10] * n ** 2 +
+    betas[11] * n * X['S_t'] +
+    betas[12] * n * X['N_t'] +
+    betas[13] * n * X['E_t'] +
+    betas[14] * X['S_t'] ** 2 +
+    betas[15] * X['S_t'] * X['N_t'] +
+    betas[16] * X['S_t'] * X['E_t'] +
+    betas[17] * X['N_t'] ** 2 +
+    betas[18] * X['N_t'] * X['E_t'] +
+    betas[19] * X['E_t'] ** 2 +
+    betas[20] * e ** 3 +
+    betas[21] * e ** 2 * n +
+    betas[22] * e ** 2 * X['S_t'] +
+    betas[23] * e ** 2 * X['N_t'] +
+    betas[24] * e ** 2 * X['E_t'] +
+    betas[25] * e * n ** 2 +
+    betas[26] * e * n * X['S_t'] +
+    betas[27] * e * n * X['N_t'] +
+    betas[28] * e * n * X['E_t'] +
+    betas[29] * e * X['S_t'] ** 2 +
+    betas[30] * e * X['S_t'] * X['N_t'] +
+    betas[31] * e * X['S_t'] * X['E_t'] +
+    betas[32] * e * X['N_t'] ** 2 +
+    betas[33] * e * X['N_t'] * X['E_t'] +
+    betas[34] * e * X['E_t'] ** 2 +
+    betas[35] * n ** 3 +
+    betas[36] * n ** 2 * X['S_t'] +
+    betas[37] * n ** 2 * X['N_t'] +
+    betas[38] * n ** 2 * X['E_t'] +
+    betas[39] * n * X['S_t'] ** 2 +
+    betas[40] * n * X['S_t'] * X['N_t'] +
+    betas[41] * n * X['S_t'] * X['E_t'] +
+    betas[42] * n * X['N_t'] ** 2 +
+    betas[43] * n * X['N_t'] * X['E_t'] +
+    betas[44] * n * X['E_t'] ** 2 +
+    betas[45] * X['S_t'] ** 3 +
+    betas[46] * X['S_t'] ** 2 * X['N_t'] +
+    betas[47] * X['S_t'] ** 2 * X['E_t'] +
+    betas[48] * X['S_t'] * X['N_t'] ** 2 +
+    betas[49] * X['S_t'] * X['N_t'] * X['E_t'] +
+    betas[50] * X['S_t'] * X['E_t'] ** 2 +
+    betas[51] * X['N_t'] ** 3 +
+    betas[52] * X['N_t'] ** 2 * X['E_t'] +
+    betas[53] * X['N_t'] * X['E_t'] ** 2 +
+    betas[54] * X['E_t'] ** 3 +
+    betas[55]) / scaling_factors[2]
 
 def get_functions():
     return [f_n, f_ne, f_dn, f_de]
 
-def check_constraints(lambdas, input, functions, alphas, betas):
+def check_constraints(lambdas, input, functions, alphas, betas, scaling_factors=[1, 1, 1, 1]):
     """
     Returns the error on constraints given some lambda values
     Given in percentage of the observed value
@@ -363,8 +501,8 @@ def check_constraints(lambdas, input, functions, alphas, betas):
     macro_var = {
         'N/S': X['N_t'] / X['S_t'],
         'E/S': X['E_t'] / X['S_t'],
-        'dN': input['dN'].unique()[0],
-        'dE': input['dE'].unique()[0]
+        'dN/S': input['dN/S'].unique()[0],
+        'dE/S': input['dE/S'].unique()[0]
     }
 
     Z = partition_function(lambdas, functions, X, alphas, betas)
@@ -380,7 +518,7 @@ def check_constraints(lambdas, input, functions, alphas, betas):
             edges = np.linspace(0, 1, 11 + 1) ** 2 * X['E_t']
             integral_value += sum(
                 quad(
-                    lambda e: f(n, e, X, alphas, betas) * np.exp(exp_in_R(n, e, X, functions, lambdas, alphas, betas)),
+                    lambda e: f(n, e, X, alphas, betas, scaling_factors) * np.exp(exp_in_R(n, e, X, functions, lambdas, alphas, betas, scaling_factors)),
                     a, b
                 )[0]
                 for a, b in zip(edges[:-1], edges[1:])
@@ -509,6 +647,8 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
                 lambda e: np.exp(sum([-lambdas[i] * functions[i](n, e, X, alphas, betas) for i in range(4)])),
                 0, X['E_t']
             )[0]
+            Z = sum(sad)
+            sad = np.array([x/Z for x in sad], dtype=float)
     else:
         for n in range(1, int(X['N_t']) + 1):
             sad[n - 1] = mp.quad(
@@ -525,8 +665,11 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
     rad = rad[:len(empirical_rad)]
     empirical_rad = empirical_rad[:len(rad)]
 
-    # RMSE
-    rmse = np.sqrt(mean_squared_error(empirical_rad, rad))
+    # # RMSE
+    # rmse = np.sqrt(mean_squared_error(empirical_rad, rad))
+
+    # MEA
+    mae = mean_absolute_error(empirical_rad, rad)
 
     # AIC
     eps = 1e-10
@@ -544,7 +687,7 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
     plt.legend()
 
     # Annotate RMSE and AIC
-    textstr = f'RMSE: {rmse:.3f}\nAIC: {aic:.2f}'
+    textstr = f'MAE: {mae:.3f}\nAIC: {aic:.2f}'
     plt.text(0.95, 0.95, textstr,
                      transform=plt.gca().transAxes,
                      fontsize=16,
@@ -554,13 +697,14 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
 
     plt.tight_layout()
     plt.grid(True, which="both", ls="--", linewidth=0.5)
-    # plt.show()
+    plt.show()
     # plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{ext}/{model}_{census}.png')
-    plt.savefig(
-        f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_{model}_{census}.png')
+    # plt.savefig(
+    #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_{model}_{census}.png')
+    #plt.close()
 
     results_data = {
-        'RMSE': [rmse],
+        'MAE': [mae],
         'AIC': [aic],
     }
 
@@ -579,40 +723,31 @@ def evaluate_model(lambdas, functions, X, alphas, betas, empirical_rad, constrai
     # results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{ext}{model}_{census}.csv', index=False)
     results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_{model}_{census}.png')
 
+    return aic, mae
+
 if __name__ == "__main__":
     ext = ''
-    #input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
-    input = pd.read_csv(f'../../data/simulated_BCI_regress_lib.csv')
-    functions = get_functions()
-    
-    if 'census' not in input.columns:
-        input = input.rename(columns={'t': 'census', 'S': 'S_t', 'N': 'N_t', 'E': 'E_t'})
+    # input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
+    # input = pd.read_csv(f'../../data/simulated_BCI_regress_lib.csv')
 
-        # Get only one row per census (e.g., the first one)
-        census_df = input.drop_duplicates(subset='census', keep='first').sort_values('census')
+    for model in ['a', 'b', 'c', 'd', 'e', 'f']:
 
-        # Compute dN and dE
-        census_df['dN'] = census_df['N_t'].diff().shift(-1)  # N(t+1) - N(t)
-        census_df['dE'] = census_df['E_t'].diff().shift(-1)  # E(t+1) - E(t)
+        input = pd.read_csv(f'../../data/LV_{model}_regression_library.csv')
+        functions = get_functions()
 
-        # If you want to merge back to original input
-        input = input.merge(census_df[['census', 'dN', 'dE']], on='census', how='left')
-        input = input.dropna(subset=['dN', 'dE'])
+        if 'census' not in input.columns:
+            input = input.rename(columns={'t': 'census', 'S': 'S_t', 'N': 'N_t', 'E': 'E_t'})
 
-    for census in input['census'].unique():
-        print(f"\n Census: {census} \n")
-        input_census = input[input['census'] == census]
+            # Get only one row per census (e.g., the first one)
+            census_df = input.drop_duplicates(subset='census', keep='first').sort_values('census')
 
-        X = input_census[[
-            'S_t', 'N_t', 'E_t',
-        ]].drop_duplicates().iloc[0]
+            # Compute dN and dE
+            census_df['dN/S'] = census_df['N_t'].diff().shift(-1) / census_df['S_t'] # (N(t+1) - N(t)) / S_t
+            census_df['dE/S'] = census_df['E_t'].diff().shift(-1) / census_df['S_t'] # (E(t+1) - E(t)) / S_t
 
-        macro_var = {
-            'N/S': float(X['N_t'] / X['S_t']),
-            'E/S': float(X['E_t'] / X['S_t']),
-            'dN': input_census['dN'].unique()[0],
-            'dE': input_census['dE'].unique()[0]
-        }
+            # If you want to merge back to original input
+            input = input.merge(census_df[['census', 'dN/S', 'dE/S']], on='census', how='left')
+            input = input.dropna(subset=['dN/S', 'dE/S'])
 
         # alphas = pd.read_csv(
         #     f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI{ext}/METimE_dn_global.csv')[
@@ -629,24 +764,39 @@ if __name__ == "__main__":
         betas = pd.read_csv(
             f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/simulated_BCI/METimE_de_global.csv')[
             'Coefficient'].values
-        
-        # Get empirical rank abundance distribution
-        # empirical_rad = get_empirical_RAD(f'../../data/BCI_regression_library{ext}.csv', census)['abundance']
-        empirical_rad = get_empirical_RAD(f'../../data/simulated_BCI_regress_lib.csv', census)['abundance']
 
-        # Make initial guess
-        initial_lambdas = make_initial_guess(X)
-        print(f"Initial guess (theoretical): {initial_lambdas}")
+        for census in input['census'].unique():
+            print(f"\n Census: {census} \n")
+            input_census = input[input['census'] == census]
 
-        print("Starting METE for initial guess")
-        initial_lambdas = METE_no_integrals.perform_optimization([initial_lambdas[:2]], X).tolist() + [0,0]               # TODO: doesn't change the initial guess?
-        constraint_errors = check_constraints(initial_lambdas, input_census, functions, alphas, betas)
-        evaluate_model(initial_lambdas, functions, X, alphas, betas, empirical_rad, constraint_errors,'METE', census, ext)
-        
-        # Perform optimization
-        optimized_lambdas = perform_optimization(initial_lambdas, functions, macro_var, X, alphas, betas)
-        print("Optimized lambdas: {}".format(optimized_lambdas))
-        constraint_errors = check_constraints(optimized_lambdas, input_census, functions, alphas, betas)
-        evaluate_model(optimized_lambdas, functions, X, alphas, betas, empirical_rad, constraint_errors,'METimE', census, ext)
+            X = input_census[[
+                'S_t', 'N_t', 'E_t',
+            ]].drop_duplicates().iloc[0]
 
-        # Are the initial_lambdas and optimized_lambdas the correct scale?
+            macro_var = {
+                'N/S': float(X['N_t'] / X['S_t']),
+                'E/S': float(X['E_t'] / X['S_t']),
+                'dN/S': input_census['dN/S'].unique()[0],
+                'dE/S': input_census['dE/S'].unique()[0]
+            }
+
+            # Get empirical rank abundance distribution
+            # empirical_rad = get_empirical_RAD(f'../../data/BCI_regression_library{ext}.csv', census)['abundance']
+            empirical_rad = get_empirical_RAD(f'../../data/simulated_BCI_regress_lib.csv', census)['abundance']
+
+            # Make initial guess
+            initial_lambdas = make_initial_guess(X)
+            print(f"Initial guess (theoretical): {initial_lambdas}")
+
+            print("Starting METE for initial guess")
+            initial_lambdas = vanilla_METE.perform_optimization([initial_lambdas[:2]], X).tolist() + [0,0]               # TODO: doesn't change the initial guess?
+            constraint_errors = check_constraints(initial_lambdas, input_census, functions, alphas, betas, scaling_factors=[1, 1, 1, 1])
+            aic, mae = evaluate_model(initial_lambdas, functions, X, alphas, betas, empirical_rad, constraint_errors,'METE', census, ext)
+
+            # Perform optimization
+            optimized_lambdas = run_optimization(initial_lambdas, functions, macro_var, X, alphas, betas)
+            print("Optimized lambdas: {}".format(optimized_lambdas))
+            constraint_errors = check_constraints(optimized_lambdas, input_census, functions, alphas, betas, scaling_factors=[1, 1, 1, 1])
+            aic, mae = evaluate_model(optimized_lambdas, functions, X, alphas, betas, empirical_rad, constraint_errors,'METimE', census, ext)
+
+            # Are the initial_lambdas and optimized_lambdas the correct scale?

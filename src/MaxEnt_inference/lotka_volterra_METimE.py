@@ -2,14 +2,14 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
+import seaborn as sns
 import time
-from scipy.stats import rv_discrete
-from sklearn.metrics import mean_squared_error
-
+from scipy.stats import rv_discrete, t
+from sklearn.metrics import mean_squared_error, r2_score
 import warnings
+import os
 
-#warnings.filterwarnings("ignore")
+from src.simulate_population_dynamics.simulate_LV import three_groups_LV, set_up_regression
 
 """
 Entropy Maximization Script
@@ -39,6 +39,26 @@ Assumptions:
     Z = sum exp( - lambda_1 f_1 - lambda_2 f_2 f(n, X))
 
 """
+
+def safe_entropy(lambdas, functions, X, coeffs):
+    """
+    Compute Shannon entropy for the given lambdas and functions.
+    Change sign because we will be minimizing instead of maximizing.
+    """
+    n = np.arange(1, int(X['N_t']) + 1)
+
+    exponent_arg = np.zeros_like(n, dtype=float)
+    for i in range(len(functions)):
+        exponent_arg += lambdas[i] * functions[i](n, X, coeffs)
+    exponent = np.exp(np.clip(-exponent_arg, 1e-12, 1e12))
+
+    Z = np.max([1e-12, np.sum(exponent)])# partition function
+
+    p = exponent / Z # probabilities
+
+    neg_H = np.sum(p * exponent_arg)
+
+    return neg_H
 
 def entropy(lambdas, functions, X, coeffs):
     """
@@ -79,7 +99,13 @@ def make_initial_guess(X, method):
     S, N = int(X['S_t']), int(X['N_t'])
     interval = [1.0 / N, S / N]
 
-    beta = root_scalar(beta_function, x0=0.001, args=(S, N), method='brentq', bracket=interval)
+    try:
+        beta = root_scalar(beta_function, x0=0.001, args=(S, N), method='brentq', bracket=interval)
+    except:
+        if method == "METE":
+            return [1/N]
+        else:
+            return [1/N, 0]
 
     if method == "METE":
         return [beta.root]
@@ -108,7 +134,8 @@ def constraint(f_k, lambdas, functions, F_k, X, coeffs):
 
     lhs = np.sum(p * f_k(n, X, coeffs))
 
-    return lhs - F_k
+    return (lhs - F_k)
+    #return (lhs - F_k) / np.abs(F_k)
 
 
 def perform_optimization(lambdas, functions, macro_var, X, coeffs):
@@ -121,28 +148,49 @@ def perform_optimization(lambdas, functions, macro_var, X, coeffs):
 
     # Set bounds
     if len(functions) == 1:
-        bounds = [(0, None)]
+        bounds = [(None, None)]
     else:
         min_l2, max_l2 = find_extremes(X, coeffs)
-        bounds = [(0, None),(min_l2, max_l2)]
+        bounds = [(None, None),(min_l2, max_l2)]
 
     # Perform optimization
     print("Starting Optimizing with constraints...")
-    result = minimize(entropy,
-                      lambdas,
-                      args=(functions, X, coeffs),
-                      constraints=constraints,
-                      bounds=bounds,
-                      method="trust-constr",
-                      options={'maxiter': 200,
-                               'xtol': 1e-6,
-                               'gtol': 1e-12,
-                               'barrier_tol': 1e-12,
-                               'disp': True,
-                               'verbose': 3
-                               })
 
-    optimized_lambdas = result.x
+    try:
+
+        result = minimize(entropy,
+                          lambdas,
+                          args=(functions, X, coeffs),
+                          constraints=constraints,
+                          bounds=bounds,
+                          method="trust-constr",
+                          options={'maxiter': 200,
+                                   'xtol': 1e-6,
+                                   'gtol': 1e-12,
+                                   'barrier_tol': 1e-12,
+                                   'disp': True,
+                                   'verbose': 3
+                                   })
+
+        optimized_lambdas = result.x
+
+    except:
+
+        result = minimize(safe_entropy,
+                          lambdas,
+                          args=(functions, X, coeffs),
+                          constraints=constraints,
+                          bounds=bounds,
+                          method='L-BFGS-B',
+                          options={'maxiter': 200,
+                                   'xtol': 1e-6,
+                                   'gtol': 1e-12,
+                                   'barrier_tol': 1e-12,
+                                   'disp': True,
+                                   'verbose': 3
+                                   })
+
+        optimized_lambdas = result.x
 
     return optimized_lambdas
 
@@ -279,12 +327,20 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
     eps = 1e-10
     log_probs = np.log(p_n[predicted_rap - 1] + eps)  # -1 for indexing
     log_likelihood = np.sum(log_probs)
-    k = len(initial_lambdas)
+    k = len(lambdas)
     aic = -2 * log_likelihood + 2 * k
 
     # Plot
     if plot:
-        plt.figure(figsize=(8, 5))
+        plt.rcParams.update({
+            'font.size': 16,  # base font size
+            'axes.labelsize': 18,  # x and y labels
+            'xtick.labelsize': 14,
+            'ytick.labelsize': 14,
+            'legend.fontsize': 14
+        })
+
+        plt.figure(figsize=(5, 2))
         ranks = np.arange(1, len(empirical_rap) + 1)
         plt.plot(ranks, empirical_rap, 'o-', label='Empirical RAP', color='blue')
         plt.plot(ranks, predicted_rap, 's--', label='Predicted RAP', color='red')
@@ -307,12 +363,53 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
         plt.grid(True, which="both", ls="--", linewidth=0.5)
         #plt.show()
         plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/{method}/{model}_{census}.png')
+        plt.close()
 
     return predicted_rap, rmse, aic
 
 
+def plot_combined_SAD(empirical, mete, metime, model, var, census_id):
+    ranks = np.arange(1, len(empirical) + 1)
+
+    # Define custom colors
+    redish = "#ef8a62"
+    blueish = "#67a9cf"
+    greyish = "#4D4D4D"  # darker grey
+
+    plt.rcParams.update({
+        'font.size': 20,  # base font size
+        'axes.labelsize': 22,  # x and y labels
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 16,
+        'legend.fontsize': 22
+    })
+
+    plt.figure(figsize=(6, 4))
+
+    # Plot with updated styles
+    plt.plot(ranks, empirical, 'o-', color=greyish, markersize=8, linewidth=3, label='Empirical')
+    plt.plot(ranks, mete, 's--', color=blueish, markersize=8, linewidth=3, label='METE')
+    plt.plot(ranks, metime, '^--', color=redish, markersize=8, linewidth=3, label='METimE')
+
+    plt.xlabel("Rank", fontsize=16)
+    plt.ylabel("Abundance", fontsize=16)
+
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
+
+    plt.legend(fontsize=12)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+
+    save_path = f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/RAD_{model}_{census}.png'
+    os.makedirs("results", exist_ok=True)
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+    #plt.show()
+
+
 if __name__ == "__main__":
-    plt.rcParams.update({'font.size': 16})
+    np.random.seed(123)
 
     # # METE
     # functions = [f_1]
@@ -347,35 +444,97 @@ if __name__ == "__main__":
     #         error = compare_SADs(optimized_lambdas, functions, X, [], empirical_RAP, 'METE', model, census)
 
             # METimE
-    for model in ['constant', 'food_web', 'cascading_food_web', 'cyclic', 'cleaner_fish', 'resource_competition']:
-        input = pd.read_csv(f'../../data/LV_{model}_regression_library.csv')
-        coeffs = pd.read_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/LV/METimE_{model}_dn_global.csv')
-        coeffs = coeffs['Coefficient'].tolist()
-        functions = [f_1, dn]
 
-        for census in input['census'].unique()[::500]:
-            input_census = input[input['census'] == census]
+    # aic_results = {
+    #     model: {var: {"METE": [], "METimE": []} for var in [0.0, 0.05, 0.1]}
+    #     for model in ['a', 'b', 'c', 'd', 'e', 'f']
+    # }
 
-            X = input_census[[
-                'S_t', 'N_t'
-            ]].drop_duplicates().iloc[0]
+    results = []
 
-            macro_var = {
-                'N/S': float(X['N_t'] / X['S_t']),
-                'dN': input_census['dN'].unique()[0]
-            }
+    for model in ['a', 'b', 'c', 'd', 'e', 'f']:
+        for var in [0.0, 0.05, 0.1]:
+            for realization in range(100):
+                df = three_groups_LV(model, T=10, var=var)
+                censuses = df['census'].unique()[::200] # sample for speed
+                print("Number of censuses: ", len(censuses), "\n")
 
-            grouped = input_census.groupby('species')['n'].sum()
-            empirical_RAP = grouped.sort_values(ascending=False).values
+                # Replace with learning new coefficients!
+                y, y_pred, coeffs = set_up_regression(df, var, LV_model=model, regression_type="global")
+                r2_transition = r2_score(y, y_pred)
 
-            # Make initial guess
-            initial_lambdas = make_initial_guess(X, 'METimE')
-            print(f"Initial lambdas: {initial_lambdas}")
-            initial_errors = check_constraints(initial_lambdas, functions, X, macro_var, coeffs)
-            #error = compare_SADs(initial_lambdas, functions, X, coeffs, empirical_RAP)
+                #coeffs = coeffs.iloc[1:].reset_index(drop=True) # TODO: check if this now works well together with find_extremes
+                coeffs = coeffs['Coefficient'].tolist()
 
-            # Perform optimization
-            optimized_lambdas = perform_optimization(initial_lambdas, functions, macro_var, X, coeffs)
-            print(f"Optimized lambdas: {optimized_lambdas}")
-            constraint_errors = check_constraints(optimized_lambdas, functions, X, macro_var, coeffs)
-            error = compare_SADs(optimized_lambdas, functions, X, coeffs, empirical_RAP, 'METimE', model, census)
+                for census in censuses:
+                    input_census = df[df['census'] == census]
+                    X = input_census[['S_t', 'N_t']].drop_duplicates().iloc[0]
+
+                    macro_mete = {'N/S': float(X['N_t'] / X['S_t'])}
+                    macro_metime = {
+                        'N/S': float(X['N_t'] / X['S_t']),
+                        'dN': input_census['dN'].unique()[0]
+                    }
+
+                    grouped = input_census.groupby('species')['n'].sum()
+                    empirical_RAP = grouped.sort_values(ascending=False).values
+
+                    # METE
+                    functions_mete = [f_1]
+                    initial_lambdas_mete = make_initial_guess(X, 'METE')
+                    lambdas_mete = perform_optimization(initial_lambdas_mete, functions_mete, macro_mete, X, [])
+                    predicted_mete, rmse_mete, aic_mete = compare_SADs(lambdas_mete, functions_mete, X, [], empirical_RAP, 'METE',
+                                                               model, census, plot=False)
+                    #aic_results[model][var]['METE'].append(aic_mete)
+
+                    # METimE
+                    functions_metime = [f_1, dn]
+                    initial_lambdas_metime = make_initial_guess(X, 'METimE')
+                    lambdas_metime = perform_optimization(initial_lambdas_metime, functions_metime, macro_metime, X, coeffs)
+                    predicted_metime, rmse_metime, aic_metime = compare_SADs(lambdas_metime, functions_metime, X, coeffs,
+                                                                   empirical_RAP, 'METimE', model, census, plot=False)
+                    #aic_results[model][var]['METimE'].append(aic_metime)
+
+                    # Plot
+                    length_RAD = min(len(empirical_RAP), len(predicted_mete), len(predicted_metime))
+                    empirical_RAP = empirical_RAP[:length_RAD]
+                    if census == 1802 and var == 0 and realization == 0:
+                        plot_combined_SAD(empirical_RAP, predicted_mete, predicted_metime, model, var, census)
+
+                    results.append({
+                        'model': model,
+                        'var': var,
+                        'AIC_mete': aic_mete,
+                        'rmse_mete': rmse_mete,
+                        'rmse_metime': rmse_metime,
+                        'AIC_metime': aic_metime,
+                        'N/S': macro_mete['N/S'],
+                        'dN': macro_metime['dN'],
+                        'r^2_transition': r2_transition
+                    })
+
+        # # --- Save Table with AIC Means and CIs ---
+        # rows = []
+        # for model in aic_results:
+        #     for var in aic_results[model]:
+        #         row = {'model': model, 'var': var}
+        #         for method in ['METE', 'METimE']:
+        #             aics = aic_results[model][var][method]
+        #             if len(aics) > 1:
+        #                 mean_aic = np.mean(aics)
+        #                 ci = t.interval(0.95, len(aics) - 1, loc=mean_aic,
+        #                                 scale=np.std(aics, ddof=1) / np.sqrt(len(aics)))
+        #                 row[f'{method}_mean'] = round(mean_aic, 2)
+        #                 row[f'{method}_CI_lower'] = round(ci[0], 2)
+        #                 row[f'{method}_CI_upper'] = round(ci[1], 2)
+        #             else:
+        #                 row[f'{method}_mean'] = row[f'{method}_CI_lower'] = row[f'{method}_CI_upper'] = np.nan
+        #         rows.append(row)
+
+        # aic_table = pd.DataFrame(rows)
+        # os.makedirs("results", exist_ok=True)
+        # aic_table.to_csv("results/AIC_summary.csv", index=False)
+        # print(aic_table)
+
+        results_df = pd.DataFrame(results)
+        results_df.to_csv("results/METimE_vs_METE_summary.csv", index=False)
