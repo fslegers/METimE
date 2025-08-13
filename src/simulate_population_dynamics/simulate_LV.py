@@ -22,42 +22,6 @@ def f(n, t, growth_rates, alpha):
     return n * growth_rates * (1 - alpha @ n)
 
 
-# def plot_solutions(sol, tspan, model=""):
-#     group_size = sol.shape[1] // 3
-#     group_colors = sns.color_palette("Set1", 3)  # Colors for X, Y, Z
-#
-#     # Map species to group colors
-#     species_colors = (
-#             [group_colors[0]] * group_size +  # X
-#             [group_colors[1]] * group_size +  # Y
-#             [group_colors[2]] * group_size  # Z
-#     )
-#
-#     sns.set(style="whitegrid", context="talk")
-#     plt.figure(figsize=(14, 7))
-#
-#     for i in range(sol.shape[1]):
-#         plt.plot(tspan, sol[:, i], lw=1.5, alpha=0.8, color=species_colors[i])
-#
-#     # Add legend
-#     legend_handles = [
-#         Patch(color=group_colors[0], label="X"),
-#         Patch(color=group_colors[1], label="Y"),
-#         Patch(color=group_colors[2], label="Z")
-#     ]
-#     plt.legend(handles=legend_handles, title="Groups")
-#
-#     plt.title(f"Lotka-Volterra Dynamics {model}", fontsize=20)
-#     plt.xlabel("Time", fontsize=18)
-#     plt.ylabel("Population Size", fontsize=18)
-#     plt.grid(True, linestyle='--', linewidth=0.5)
-#     sns.despine()
-#     plt.tight_layout()
-#     #plt.show()
-#     path = "C://Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/dynamics_" + model + ".png"
-#     plt.savefig(path)
-#     plt.close()
-
 def plot_solutions(sol, tspan, model=""):
     """
     Plots time-series solutions of a dynamical system, grouping species by variable type (X, Y, Z).
@@ -114,7 +78,7 @@ def create_df(solutions):
 
     # Increase the observation interval by only keeping every 10th time step                                            # TODO: REMOVE AGAIN BECAUSE THIS WILL HAPPEN LATER ON
     # so that dn is not so small
-    sampled_censuses = np.arange(T)
+    sampled_censuses = np.arange(T)[::50]
     subsamples = solutions[sampled_censuses]
     T = subsamples.shape[0]
 
@@ -125,19 +89,16 @@ def create_df(solutions):
         "n": subsamples.flatten()
     })
 
-    # Pivot back into (T x S) matrix for easier computation of totals
-    n_matrix = subsamples
-
     # Compute N (total individuals) and S (species richness) over time
-    total_N = n_matrix.sum(axis=1)  # Total individuals at each time
-    richness_S = (n_matrix > 0).sum(axis=1)  # Species with n > 0
+    total_N = subsamples.sum(axis=1)  # Total individuals at each time
+    richness_S = (subsamples > 0).sum(axis=1)  # Species with n > 0
 
     # Broadcast totals into long format
     df["N_t"] = np.repeat(total_N, S)
     df["S_t"] = np.repeat(richness_S, S)
 
     # Compute dn per species (difference in n from previous step)
-    dn_matrix = np.diff(n_matrix, axis=0, prepend=np.zeros((1, S)))
+    dn_matrix = np.diff(subsamples, axis=0, prepend=np.zeros((1, S)))
     df["dn"] = dn_matrix.flatten()
 
     # Compute dN and dS per time step
@@ -168,208 +129,10 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
         'Z': slice(2 * group_size, S)
     }
 
-    # def constant():
-    #     # Growth rates: individual variability around mean 1.0
-    #     growth_rates = np.random.normal(1.0, var, S)
-    #
-    #     # Interaction matrix A: full pairwise variability
-    #     A[:, :] = np.random.normal(0.5, var, (S, S))
-    #
-    #     # Diagonal (self-competition) gets slightly higher values
-    #     np.fill_diagonal(A, 1.0 + np.random.normal(0, var, S))
-    #
-    #     # Initial populations: grouped by different ranges, still per individual
-    #     initial_conditions = np.random.uniform(0, 1, S)
-    #     initial_conditions /= np.sum(initial_conditions)
-    #
-    #     return growth_rates, A, initial_conditions
-    #
-    #
-    # def food_web():
-    #     # Growth rates with per-individual noise
-    #     growth_rates = np.concatenate([
-    #         np.repeat(0.3, group_size),
-    #         np.repeat(0.7, group_size),
-    #         np.repeat(0.9, group_size)
-    #     ])
-    #     growth_rates += np.random.normal(0, var, len(growth_rates))
-    #
-    #     # Inter-group competition with per-individual variability
-    #     A[group_indices['X'], group_indices['Y']] = 0.0  # Y on X
-    #     A[group_indices['X'], group_indices['Z']] = 0.0  # Z on X
-    #
-    #     A[group_indices['Y'], group_indices['X']] = 0.8 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # X on Y
-    #     A[group_indices['Y'], group_indices['Z']] = 0.0  # Z on Y
-    #
-    #     A[group_indices['Z'], group_indices['X']] = 0.0  # X on Z
-    #     A[group_indices['Z'], group_indices['Y']] = 0.7 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # Y on Z
-    #
-    #     # Intra-group competition: still per-individual (diagonal within group block)
-    #     for group in group_indices.values():
-    #         A[group, group] = 1.0 + np.random.normal(0, var, (group_size, group_size))
-    #
-    #     # Initial populations with variability per individual
-    #     initial_conditions = np.concatenate([
-    #         np.random.uniform(0, 0.2, group_size),
-    #         np.random.uniform(0, 0.4, group_size),
-    #         np.random.uniform(0, 1.0, group_size)
-    #     ])
-    #     initial_conditions /= np.sum(initial_conditions)
-    #
-    #     return growth_rates, A, initial_conditions
-    #
-    #
-    # def cascading_food_web():
-    #     # Growth rates with per-individual noise
-    #     growth_rates = np.concatenate([
-    #         np.repeat(0.3, group_size),
-    #         np.repeat(0.7, group_size),
-    #         np.repeat(0.9, group_size)
-    #     ])
-    #     growth_rates += np.random.normal(0, var, len(growth_rates))
-    #
-    #     # Inter-group competition with per-individual variability
-    #     A[group_indices['X'], group_indices['Y']] = 0.0  # Y on X
-    #     A[group_indices['X'], group_indices['Z']] = 0.0  # Z on X
-    #
-    #     A[group_indices['Y'], group_indices['X']] = 0.8 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # X on Y
-    #     A[group_indices['Y'], group_indices['Z']] = 0.0  # Z on Y
-    #
-    #     A[group_indices['Z'], group_indices['X']] = 0.8 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # X on Z
-    #     A[group_indices['Z'], group_indices['Y']] = 0.6 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # Y on Z
-    #
-    #     # Intra-group competition: still per-individual (diagonal within group block)
-    #     for group in group_indices.values():
-    #         A[group, group] = 1.0 + np.random.normal(0, var, (group_size, group_size))
-    #
-    #     # Initial populations with variability per individual
-    #     initial_conditions = np.concatenate([
-    #         np.random.uniform(0, 0.2, group_size),
-    #         np.random.uniform(0, 0.4, group_size),
-    #         np.random.uniform(0, 1.0, group_size)
-    #     ])
-    #     initial_conditions /= np.sum(initial_conditions)
-    #
-    #     return growth_rates, A, initial_conditions
-    #
-    #
-    # def cyclic():
-    #     # Growth rates with per-individual noise
-    #     growth_rates = np.concatenate([
-    #         np.repeat(0.3, group_size),
-    #         np.repeat(0.6, group_size),
-    #         np.repeat(0.9, group_size)
-    #     ])
-    #     growth_rates += np.random.normal(0, var, len(growth_rates))
-    #
-    #     # Inter-group competition with per-individual variability
-    #     A[group_indices['X'], group_indices['Y']] = 0.0  # Y on X
-    #     A[group_indices['X'], group_indices['Z']] = 0.4 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size)) # Z on X
-    #
-    #     A[group_indices['Y'], group_indices['X']] = 0.8 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # X on Y
-    #     A[group_indices['Y'], group_indices['Z']] = 0.0  # Z on Y
-    #
-    #     A[group_indices['Z'], group_indices['X']] = 0.0  # X on Z
-    #     A[group_indices['Z'], group_indices['Y']] = 0.6 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # Y on Z
-    #
-    #     # Intra-group competition: still per-individual (diagonal within group block)
-    #     for group in group_indices.values():
-    #         A[group, group] = 1.0 + np.random.normal(0, var, (group_size, group_size))
-    #
-    #     # Initial populations with variability per individual
-    #     initial_conditions = np.concatenate([
-    #         np.random.uniform(0, 0.2, group_size),
-    #         np.random.uniform(0, 0.5, group_size),
-    #         np.random.uniform(0, 1.0, group_size)
-    #     ])
-    #     initial_conditions /= np.sum(initial_conditions)
-    #
-    #     return growth_rates, A, initial_conditions
-    #
-    #
-    # def cleaner_fish():
-    #     # Growth rates with per-individual noise
-    #     growth_rates = np.concatenate([
-    #         np.repeat(0.3, group_size),
-    #         np.repeat(0.6, group_size),
-    #         np.repeat(1.2, group_size)
-    #     ])
-    #     growth_rates += np.random.normal(0, var, len(growth_rates))
-    #
-    #     # Inter-group competition with per-individual variability
-    #     A[group_indices['X'], group_indices['Y']] = -0.2  # Y on X
-    #     A[group_indices['X'], group_indices['Z']] = 0.4 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size)) # Z on X
-    #
-    #     A[group_indices['Y'], group_indices['X']] = -0.2 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # X on Y
-    #     A[group_indices['Y'], group_indices['Z']] = 0.0  # Z on Y
-    #
-    #     A[group_indices['Z'], group_indices['X']] = 0.0  # X on Z
-    #     A[group_indices['Z'], group_indices['Y']] = 0.5 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # Y on Z
-    #
-    #     # Intra-group competition: still per-individual (diagonal within group block)
-    #     for group in group_indices.values():
-    #         A[group, group] = 1.0 + np.random.normal(0, var, (group_size, group_size))
-    #
-    #     # Initial populations with variability per individual
-    #     initial_conditions = np.concatenate([
-    #         np.random.uniform(0, 0.2, group_size),
-    #         np.random.uniform(0, 0.5, group_size),
-    #         np.random.uniform(0, 1.0, group_size)
-    #     ])
-    #     initial_conditions /= np.sum(initial_conditions)
-    #
-    #     return growth_rates, A, initial_conditions
-    #
-    #
-    # def resource_competition():
-    #     # Growth rates with per-individual noise
-    #     growth_rates = np.concatenate([
-    #         np.repeat(0.3, group_size),
-    #         np.repeat(0.4, group_size),
-    #         np.repeat(0.8, group_size)
-    #     ])
-    #     growth_rates += np.random.normal(0, var, len(growth_rates))
-    #
-    #     # Inter-group competition with per-individual variability
-    #     A[group_indices['X'], group_indices['Y']] = 0.4 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size)) # Y on X
-    #     A[group_indices['X'], group_indices['Z']] = 0.0  # Z on X
-    #
-    #     A[group_indices['Y'], group_indices['X']] = 0.2 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # X on Y
-    #     A[group_indices['Y'], group_indices['Z']] = 0.0  # Z on Y
-    #
-    #     A[group_indices['Z'], group_indices['X']] = 0.4 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size)) # X on Z
-    #     A[group_indices['Z'], group_indices['Y']] = 0.8 + np.random.normal(0, var,
-    #                                                                                (group_size, group_size))  # Y on Z
-    #
-    #     # Intra-group competition: still per-individual (diagonal within group block)
-    #     for group in group_indices.values():
-    #         A[group, group] = 1.0 + np.random.normal(0, var, (group_size, group_size))
-    #
-    #     # Initial populations with variability per individual
-    #     initial_conditions = np.concatenate([
-    #         np.random.uniform(0, 0.3, group_size),
-    #         np.random.uniform(0, 0.4, group_size),
-    #         np.random.uniform(0, 1.0, group_size)
-    #     ])
-    #     initial_conditions /= np.sum(initial_conditions)
-    #
-    #     return growth_rates, A, initial_conditions
-
     def a_LV():
+        """
+        Constant interaction network
+        """
         growth_rates = np.ones(S)
 
         # Equal competition for all species
@@ -389,7 +152,10 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
         initial_conditions /= np.sum(initial_conditions)
         return growth_rates, A, initial_conditions
 
-    def b_LV():
+    def e_LV():
+        """
+        Food chain
+        """
         growth_rates = np.array([1]*4 + [0.2]*4 + [-0.001]*4)
 
         # Inter-group competition with per-individual variability
@@ -416,7 +182,10 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
 
         return growth_rates, A, initial_conditions
 
-    def c_LV():
+    def b_LV():
+        """
+        Two predators one prey
+        """
         growth_rates = np.array([1.0]*4 + [-0.001]*8)
 
         # Inter-group competition with per-individual variability
@@ -442,7 +211,10 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
 
         return growth_rates, A, initial_conditions
 
-    def d_LV():
+    def c_LV():
+        """
+        One predator two prey
+        """
         growth_rates = np.array([1.0] * 8 + [-0.001] * 4)
 
         # Inter-group competition with per-individual variability
@@ -469,7 +241,10 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
 
         return growth_rates, A, initial_conditions
 
-    def e_LV():
+    def f_LV():
+        """
+        Food chain with omnivory
+        """
         growth_rates = np.array([1.0] * 4 + [0.2] * 4 + [-0.001] * 4)
 
         # Inter-group competition with per-individual variability
@@ -498,7 +273,8 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
 
         return growth_rates, A, initial_conditions
 
-    def f_LV():
+    def d_LV():
+        """food chain with cycle"""
         growth_rates = np.array([1.0] * 8 + [-0.001] * 4)
 
         # Inter-group competition with per-individual variability
@@ -530,18 +306,6 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
     def f_wrapped(t, n):
         return f(n, t, growth_rates, A)
 
-    # if model_func == "constant":
-    #     growth_rates, A, initial_conditions = constant()
-    # elif model_func == "food_web":
-    #     growth_rates, A, initial_conditions = food_web()
-    # elif model_func == "cascading_food_web":
-    #     growth_rates, A, initial_conditions = cascading_food_web()
-    # elif model_func == "cyclic":
-    #     growth_rates, A, initial_conditions = cyclic()
-    # elif model_func == "cleaner_fish":
-    #     growth_rates, A, initial_conditions = cleaner_fish()
-    # elif model_func == "resource_competition":
-    #     growth_rates, A, initial_conditions = resource_competition()
     if model_func == "a":
         growth_rates, A, initial_conditions = a_LV()
     elif model_func == "b":
@@ -576,7 +340,6 @@ def three_groups_LV(model_func="food_web", T=50, var=0.0):
     # scale up populations
     solutions = solutions * N
 
-
     #plot_solutions(solutions, tspan, model_func)
     df = create_df(solutions)
 
@@ -595,7 +358,7 @@ def do_polynomial_regression(df, LV_model, var, regression_type='global', cluste
     X = df.drop(columns='dn')
 
     # Compute polynomial features
-    poly = PolynomialFeatures(degree=2, include_bias=True)
+    poly = PolynomialFeatures(degree=2, include_bias=False)
 
     try:
         X_poly = poly.fit_transform(X)
@@ -642,7 +405,7 @@ def do_polynomial_regression(df, LV_model, var, regression_type='global', cluste
 def set_up_regression(df, var, N_clusters=None, LV_model='constant', regression_type="global", cluster=""):
     # Single observation interval
     all_census = sorted(df['census'].unique())
-    reduced_census = deepcopy(all_census)[::100]
+    reduced_census = deepcopy(all_census)
 
     # Filter to current censuses
     df_filtered = df[df['census'].isin(reduced_census)].copy().reset_index(drop=True)
@@ -660,48 +423,6 @@ def set_up_regression(df, var, N_clusters=None, LV_model='constant', regression_
     y, y_pred, coeffs = do_polynomial_regression(df_for_setup, LV_model, var, regression_type, cluster)
 
     return y, y_pred, coeffs
-
-
-# def plot_observed_vs_predicted(obs, pred, title, species=None):
-#     """
-#     Plots observed vs. predicted values, optionally colored by species.
-#
-#     Parameters:
-#     - obs: list or array of observed values
-#     - pred: list or array of predicted values
-#     - title: str, the title of the plot
-#     - species: list or array of species IDs (same length as obs/pred), optional
-#     """
-#     r2 = r2_score(obs, pred)
-#
-#     plt.figure()
-#
-#     if species is not None:
-#         species = np.array(species)
-#         unique_species = np.unique(species)
-#         cmap = plt.get_cmap("tab20", len(unique_species))
-#         for idx, sp in enumerate(unique_species):
-#             mask = species == sp
-#             plt.scatter(np.array(obs)[mask], np.array(pred)[mask],
-#                         label=f"Species {sp}", color=cmap(idx), alpha=0.6, edgecolors='k')
-#         #plt.legend(loc='best', bbox_to_anchor=(1.05, 1.0), title='Species', fontsize='small')
-#     else:
-#         plt.scatter(obs, pred, alpha=0.6, edgecolors='k')
-#
-#     plt.text(0.05, 0.95, f'R² = {r2:.2f}', ha='left', va='top', transform=plt.gca().transAxes,
-#              fontsize=14, bbox=dict(facecolor='white', alpha=0.6, edgecolor='gray', boxstyle='round,pad=0.5'))
-#
-#     plt.plot([min(obs), max(obs)], [min(obs), max(obs)], 'r--', linewidth=1)  # 1:1 line
-#     plt.title(title)
-#     plt.xlabel("Observed")
-#     plt.ylabel("Predicted")
-#     plt.grid(True)
-#     plt.tight_layout()
-#     plt.show()
-#
-#     # path = "C://Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/" + title + ".png"
-#     # plt.savefig(path)
-#     # plt.close()
 
 
 def plot_observed_vs_predicted(obs, pred, title, species=None, save=False, dpi=300):
@@ -773,26 +494,21 @@ def plot_observed_vs_predicted(obs, pred, title, species=None, save=False, dpi=3
         plt.show()
 
 
-def adjusted_r2_score(r2, n, k):
-    """Compute adjusted R^2."""
-    return 1 - (1 - r2) * (n - 1) / (n - k - 1) if n != k + 1 else np.nan
-
-
-def get_cluster_state_variables(df):
-    """
-    For each time t, calculates the total number of individuals in each cluster
-    and adds these as new columns to the dataframe.
-
-    Assumes df contains at least: 't', 'cluster', and 'individuals' columns.
-    """
-    # Group by time and cluster, summing individuals
-    cluster_totals = df.groupby(['census', 'cluster'])['n'].sum().unstack(fill_value=0)
-
-    # Rename columns to reflect cluster totals
-    cluster_totals.columns = [f'N_{col}' for col in cluster_totals.columns]
-    cluster_totals = cluster_totals.reset_index()
-
-    return cluster_totals
+# def get_cluster_state_variables(df):
+#     """
+#     For each time t, calculates the total number of individuals in each cluster
+#     and adds these as new columns to the dataframe.
+#
+#     Assumes df contains at least: 't', 'cluster', and 'individuals' columns.
+#     """
+#     # Group by time and cluster, summing individuals
+#     cluster_totals = df.groupby(['census', 'cluster'])['n'].sum().unstack(fill_value=0)
+#
+#     # Rename columns to reflect cluster totals
+#     cluster_totals.columns = [f'N_{col}' for col in cluster_totals.columns]
+#     cluster_totals = cluster_totals.reset_index()
+#
+#     return cluster_totals
 
 
 def get_metrics(model, var, T=20, repetitions=100):
@@ -824,18 +540,15 @@ def get_metrics(model, var, T=20, repetitions=100):
         # # -------- CLUSTERED REGRESSION --------
         # df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
         # X_clustered = get_cluster_state_variables(df)
-        # cluster_r2, cluster_adj_r2 = [], []
+        # cluster_r2 = []
         # for cluster in df['cluster'].unique():
         #     df_cluster = df[df['cluster'] == cluster]
         #     obs, pred = set_up_regression(df_cluster.drop(columns=['cluster']), var, X_clustered, regression_type="clustered", cluster=cluster, LV_model=model)
         #     obs = obs.tolist()
         #     pred = pred.tolist()
         #     r2 = r2_score(obs, pred)
-        #     #adj_r2 = adjusted_r2_score(r2, len(obs), X.shape[1])
         #     cluster_r2.append(r2)
-        #     #cluster_adj_r2.append(adj_r2)
         # results_r2['clustered'].append(round(np.nanmean(cluster_r2), 3))
-        # #results_adj_r2['clustered'].append(round(np.nanmean(cluster_adj_r2), 3))
 
     # Convert to DataFrames: one row per treatment, one column per model-variance
     index = ['global', 'species_specific']
@@ -886,5 +599,4 @@ def get_metrics(model, var, T=20, repetitions=100):
 # # final_r2_df = pd.concat(all_r2, axis=1).transpose()
 # # final_r2_df = final_r2_df.reset_index().rename(columns={'index': 'model'})
 # # final_r2_df.to_csv('C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/r2.csv', index=False)
-#
-#
+

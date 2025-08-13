@@ -68,8 +68,11 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
         if col in feature_cols.columns:
             feature_cols = feature_cols.drop(columns=[col])
 
+    if level != 'individuals' and cluster == 'global':
+        # order columns e, n, S, N, E
+
     # Step 4: Compute polynomial features
-    poly = PolynomialFeatures(degree=3, include_bias=True)
+    poly = PolynomialFeatures(degree=3, include_bias=False)
     X_poly = poly.fit_transform(feature_cols)
     feature_names = poly.get_feature_names_out(feature_cols.columns)
     X = pd.DataFrame(X_poly, columns=feature_names, index=df.index)
@@ -85,13 +88,6 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
     else:
         X.index = df.index
         y.index = df.index
-
-    # # TODO: SEE WHAT HAPPENS IF WE REMOVE HIGHER ORDERS OF e
-    # cols_to_drop = [col for col in X.columns if 'e^' in col]
-    # X = X.drop(columns=cols_to_drop)
-
-    # REMOVE HIGHER ORDERS OF STATE VARIABLES
-    pattern = re.compile(r'(N|E|S)_(\d*)\^([2-9]|\d{2,})')
 
     cols_to_drop = [
         col for col in X.columns

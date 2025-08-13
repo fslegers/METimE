@@ -2,42 +2,34 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
 import matplotlib.pyplot as plt
-import seaborn as sns
-import time
-from scipy.stats import rv_discrete, t
-from sklearn.metrics import mean_squared_error, r2_score
+from scipy.stats import rv_discrete
+from sklearn.metrics import r2_score, mean_absolute_error
+from matplotlib.lines import Line2D
 import warnings
 import os
 
 from src.simulate_population_dynamics.simulate_LV import three_groups_LV, set_up_regression
 
 """
-Entropy Maximization Script
+Script for analysis of Lotka Volterra model
 ---------------------------
-This script maximizes the Shannon entropy subject to constraints on macroscopic ecosystem variables.
-It supports different methods (METE, METimE) that determine the functions that are used in the constraints 
-and appear in the ecosystem structure function, and also the macro-variables and the  number of lambda 
-parameters to optimize.
 
-Components:
-    1. Methods: Choose how to setup the functions and constraints.
-    2. Functions: Define the constraints and the form of the ecosystem structure function.
-    3. Macro-variables: Right-hand side values for the constraints (N/S).
-    4. State variables: Values used to calculate functions and perform averaging (S and N).
-    5. Census: each gets its own optimization.
-
-Usage:
-    Provide a data set (CSV file) and select a method. The data set should at least contain the 
-    following columns: 'census', 'n', 'S_t', and 'N_t'. For method METimE, the 'dN' should also
-    be available.
-
-    The script performs optimization and outputs the optimized lambda values along with constraint errors 
-    and resulting entropy.
+For six intereaction networks, does the following 20 times:
+    (a) Generate trajectories of species abundances using the LV model
+    (b) Transform into time series with regular time intervals
+    (c) Parametrize transition function f(n, N) 
+    (d) Find optimal lambda values for METE
+    (e) Find optimal lambda values for METimE (= METE with additional constraint E[f(n, N)] = N_{t + 1} - N_t)
+    (f) Compare predicted vs empirical rank-abundance distributions
+    
+Reports the following metrics (averaged over the 20 repetitions):
+    (a) R2 of observed and predicted (by parametrized f(n, N)) values of n_{t + 1} - n_t
+    (b) AIC of empirical rank abundance distribution of METE and METimE 
+    (C) MAE of empirical rank abundance distribution of METE and METimE 
 
 Assumptions:
-    R(n) = exp(- lambda_1 n - lambda_2 f(n, X)) / Z
-    Z = sum exp( - lambda_1 f_1 - lambda_2 f_2 f(n, X))
-
+    f(n, N) = dn/dt = c0 + c1 * N + c2 * n^2 + c3 * n * N + c4 * N^2 + c5 * n^3
+    lambda_1 must be strictly positive
 """
 
 def safe_entropy(lambdas, functions, X, coeffs):
@@ -148,10 +140,10 @@ def perform_optimization(lambdas, functions, macro_var, X, coeffs):
 
     # Set bounds
     if len(functions) == 1:
-        bounds = [(None, None)]
+        bounds = [(0, None)]
     else:
         min_l2, max_l2 = find_extremes(X, coeffs)
-        bounds = [(None, None),(min_l2, max_l2)]
+        bounds = [(0, None),(min_l2, max_l2)]
 
     # Perform optimization
     print("Starting Optimizing with constraints...")
@@ -164,10 +156,7 @@ def perform_optimization(lambdas, functions, macro_var, X, coeffs):
                           constraints=constraints,
                           bounds=bounds,
                           method="trust-constr",
-                          options={'maxiter': 200,
-                                   'xtol': 1e-6,
-                                   'gtol': 1e-12,
-                                   'barrier_tol': 1e-12,
+                          options={'initial_tr_radius': 0.001,
                                    'disp': True,
                                    'verbose': 3
                                    })
@@ -182,8 +171,7 @@ def perform_optimization(lambdas, functions, macro_var, X, coeffs):
                           constraints=constraints,
                           bounds=bounds,
                           method='L-BFGS-B',
-                          options={'maxiter': 200,
-                                   'xtol': 1e-6,
+                          options={'xtol': 1e-6,
                                    'gtol': 1e-12,
                                    'barrier_tol': 1e-12,
                                    'disp': True,
@@ -221,14 +209,15 @@ def f_1(n, X, coeffs):
     return n
 
 def dn(n, X, coeffs):
-    c0, c1, c2, c3, c4, c5, c6 = coeffs
-    return c0 + c1 * n + c2 * X['N_t'] + c3 * n**2 + c4 * n * X['N_t'] + c5 * X['N_t']**2 + c6
+    c0, c1, c2, c3, c4, c5 = coeffs
+    return c0 * n + c1 * X['N_t'] + c2 * n**2 + c3 * n * X['N_t'] + c4 * X['N_t']**2 + c5
 
 def find_extremes(X, coeffs):
     min_f = np.inf
     max_f = -np.inf
 
     extrema = [1, X['N_t']]
+
     if coeffs[2] != 0:
         extremum = -(coeffs[0] + coeffs[3] * X['N_t']) / (2 * coeffs[2]) # this is the zero point of the derivative of dn with respect to n
         if extremum > 0:
@@ -259,7 +248,18 @@ def compute_SAD_probabilities(lambdas, functions, X, coeffs):
 
     unnorm_p = np.exp(-exponent)
     Z = unnorm_p.sum()
+
     return unnorm_p / Z
+
+
+def compute_entropy(p):
+    entropy = 0
+
+    for p_n in p:
+        if p_n != 0:
+            entropy += p_n * np.log(p_n)
+
+    return -entropy
 
 
 def get_rank_abundance(p_n, X):
@@ -294,7 +294,7 @@ def get_rank_abundance(p_n, X):
     return np.sort(pred_abundances)[::-1]  # descending order
 
 
-def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, census, plot=True):
+def compare_SADs(lambdas, functions, X, coeffs, empirical_rad, method, model, census, plot=True):
     """
     Compare predicted vs empirical rank abundance distributions.
 
@@ -303,11 +303,11 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
         functions: list of constraint functions f_i(n, X, coeffs)
         X: dictionary of state variables (e.g., S_t, N_t, etc.)
         coeffs: parameters used by f_i
-        empirical_rap: observed rank-abundance list or array
+        empirical_rad: observed rank-abundance list or array
         plot: whether to display the plot (default: True)
 
     Returns:
-        predicted_rap: predicted abundances
+        predicted_rad: predicted abundances
         rmse: root mean squared error
         aic: Akaike Information Criterion
     """
@@ -315,20 +315,32 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
     # SAD from lambda parameters
     p_n = compute_SAD_probabilities(lambdas, functions, X, coeffs)
 
-    # Predicted rank-abundance
-    predicted_rap = get_rank_abundance(p_n, X)
-    predicted_rap = predicted_rap[:len(empirical_rap)]
-    empirical_rap = empirical_rap[:len(predicted_rap)]
+    if np.abs(np.sum(p_n) - 1) > 0.0005:
+        print(f"Warning: sum(p_n) = {sum(p_n):.4f} != 1.0")
 
-    # RMSE
-    rmse = np.sqrt(mean_squared_error(empirical_rap, predicted_rap))
+    # Compute entropy
+    entropy = compute_entropy(p_n)
+
+    # Predicted rank-abundance
+    predicted_rad = get_rank_abundance(p_n, X)
+    predicted_rad = predicted_rad[:len(empirical_rad)]
+    empirical_rad = empirical_rad[:len(predicted_rad)]
+
+    # MAE
+    mae = mean_absolute_error(empirical_rad, predicted_rad)
 
     # AIC
-    eps = 1e-10
-    log_probs = np.log(p_n[predicted_rap - 1] + eps)  # -1 for indexing
-    log_likelihood = np.sum(log_probs)
-    k = len(lambdas)
-    aic = -2 * log_likelihood + 2 * k
+    if method == "METE":
+        k = 2
+    elif method == "METimE":
+        k = 3
+
+    log_likelihood = 0
+    for i in range(len(empirical_rad)):
+        n_i = int(empirical_rad[i])
+        p_i = max(p_n[n_i-1], 1e-8)
+        log_likelihood += np.log(p_i)
+    aic = 2*k - 2*log_likelihood
 
     # Plot
     if plot:
@@ -341,9 +353,9 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
         })
 
         plt.figure(figsize=(5, 2))
-        ranks = np.arange(1, len(empirical_rap) + 1)
-        plt.plot(ranks, empirical_rap, 'o-', label='Empirical RAP', color='blue')
-        plt.plot(ranks, predicted_rap, 's--', label='Predicted RAP', color='red')
+        ranks = np.arange(1, len(empirical_rad) + 1)
+        plt.plot(ranks, empirical_rad, 'o-', label='Empirical RAP', color='blue')
+        plt.plot(ranks, predicted_rad, 's--', label='Predicted RAP', color='red')
         plt.xlabel('Rank')
         plt.ylabel('Abundance')
         #plt.yscale('log')
@@ -351,7 +363,7 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
         plt.legend()
 
         # Annotate RMSE and AIC
-        textstr = f'RMSE: {rmse:.3f}\nAIC: {aic:.2f}'
+        textstr = f'RMSE: {mae:.3f}\nAIC: {aic:.2f}'
         plt.text(0.95, 0.95, textstr,
                  transform=plt.gca().transAxes,
                  fontsize=16,
@@ -365,10 +377,10 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rap, method, model, ce
         plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/{method}/{model}_{census}.png')
         plt.close()
 
-    return predicted_rap, rmse, aic
+    return predicted_rad, mae, aic, entropy
 
 
-def plot_combined_SAD(empirical, mete, metime, model, var, census_id):
+def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var):
     ranks = np.arange(1, len(empirical) + 1)
 
     # Define custom colors
@@ -408,62 +420,124 @@ def plot_combined_SAD(empirical, mete, metime, model, var, census_id):
     #plt.show()
 
 
+# def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var):
+#     ranks = np.arange(1, len(empirical) + 1)
+#
+#     # Custom colors
+#     redish = "#ef8a62"
+#     blueish = "#67a9cf"
+#     greyish = "#4D4D4D"
+#
+#     plt.rcParams.update({
+#         'font.size': 20,
+#         'axes.labelsize': 22,
+#         'xtick.labelsize': 16,
+#         'ytick.labelsize': 16,
+#         'legend.fontsize': 14
+#     })
+#
+#     plt.figure(figsize=(6, 4))
+#
+#     # Plot actual data
+#     plt.plot(ranks, empirical, 'o-', color=greyish, markersize=8, linewidth=3, label='Empirical')
+#     plt.plot(ranks, mete, 's--', color=blueish, markersize=8, linewidth=3, label='METE')
+#     plt.plot(ranks, metime, '^--', color=redish, markersize=8, linewidth=3, label='METimE')
+#
+#     # Add fake entries for N/S and dN/S
+#     ns_text = f"N/S = {macro_var['N/S']:.2f}"
+#     dns_text = f"1/S ΔN = {macro_var['dN/S']:.2f}"
+#
+#     # Create invisible handles
+#     empty_handle = Line2D([], [], color='none', label=ns_text)
+#     empty_handle2 = Line2D([], [], color='none', label=dns_text)
+#
+#     # Legend with all elements
+#     plt.legend(handles=[
+#         plt.Line2D([], [], color=greyish, marker='o', linestyle='-', markersize=8, linewidth=3, label='Empirical'),
+#         plt.Line2D([], [], color=blueish, marker='s', linestyle='--', markersize=8, linewidth=3, label='METE'),
+#         plt.Line2D([], [], color=redish, marker='^', linestyle='--', markersize=8, linewidth=3, label='METimE'),
+#         empty_handle,
+#         empty_handle2
+#     ], loc='best', frameon=True)
+#
+#     plt.xlabel("Rank", fontsize=16)
+#     plt.ylabel("Abundance", fontsize=16)
+#
+#     plt.xticks(fontsize=14)
+#     plt.yticks(fontsize=14)
+#
+#     plt.grid(True, linestyle='--', alpha=0.5)
+#     plt.tight_layout()
+#
+#     # Fix file save path
+#     save_path = f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/RAD_{model}_{census_id}.png'
+#     os.makedirs(os.path.dirname(save_path), exist_ok=True)
+#     plt.savefig(save_path, dpi=300)
+#     plt.close()
+
+
+def generate_aic_mae_entropy_table(df):
+    metrics = [
+        'AIC_mete', 'MAE_mete', 'entropy_mete',
+        'AIC_metime', 'MAE_metime', 'entropy_metime'
+    ]
+
+    summary = df.groupby(['model', 'var'])[metrics].mean().reset_index()
+    summary = summary.sort_values(['model', 'var'])
+    summary = summary.round(3)  # More precision for entropy if needed
+
+    # Optional: Rename columns for prettier LaTeX output
+    summary.columns = [
+        'Model', 'Variance',
+        'METE AIC', 'METE MAE', 'METE Entropy',
+        'METimE AIC', 'METimE MAE', 'METimE Entropy'
+    ]
+
+    # Format numeric columns to 3 decimal places
+    for col in summary.columns[2:]:
+        summary[col] = summary[col].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "--")
+
+    return summary.to_latex(
+        index=False,
+        caption="Mean AIC, MAE, and entropy for METE and METimE by model and inter-genus variance",
+        label="tab:metrics_entropy_by_model_variance",
+        column_format='llrrr|rrr'
+    )
+
+
+def generate_r2_table(df):
+    r2_table = df.groupby(['var', 'model'])['r^2_transition'].first().unstack()
+    r2_table = r2_table.sort_index()
+
+    # Format values as strings with 3 decimal places (and replace NaN with '--')
+    formatted_table = r2_table.applymap(
+        lambda x: f"{x:.3f}" if pd.notnull(x) else "--"
+    )
+    return formatted_table.to_latex(
+        caption="Transition $R^2$ by model and inter-genus variance",
+        label="tab:r2_by_model_variance",
+        index_names=True,
+        column_format='l' + 'c' * len(r2_table.columns),
+        escape=False
+    )
+
 if __name__ == "__main__":
     np.random.seed(123)
-
-    # # METE
-    # functions = [f_1]
-    # for model in ['constant', 'food_web', 'cascading_food_web', 'cyclic', 'cleaner_fish', 'resource_competition']:
-    # #for model in ['constant']:
-    #     input = pd.read_csv(f'../../data/LV_{model}_regression_library.csv')
-    #
-    #     for census in input['census'].unique()[::500]:
-    #         input_census = input[input['census'] == census]
-    #
-    #         X = input_census[[
-    #             'S_t', 'N_t'
-    #         ]].drop_duplicates().iloc[0]
-    #
-    #         macro_var = {
-    #             'N/S': float(X['N_t'] / X['S_t'])
-    #         }
-    #
-    #         grouped = input_census.groupby('species')['n'].sum()
-    #         empirical_RAP = grouped.sort_values(ascending=False).values
-    #
-    #         # Make initial guess
-    #         initial_lambdas = make_initial_guess(X, 'METE')
-    #         initial_errors = check_constraints(initial_lambdas, functions, X, macro_var, [])
-    #         print(f"Initial lambdas: {initial_lambdas}")
-    #         #error = compare_SADs(initial_lambdas, functions, X, [], empirical_RAP)
-    #
-    #         # Perform optimization
-    #         optimized_lambdas = perform_optimization(initial_lambdas, functions, macro_var, X, [])
-    #         constraint_errors = check_constraints(optimized_lambdas, functions, X, macro_var, [])
-    #         print(f"Optimized lambdas: {optimized_lambdas}")
-    #         error = compare_SADs(optimized_lambdas, functions, X, [], empirical_RAP, 'METE', model, census)
-
-            # METimE
-
-    # aic_results = {
-    #     model: {var: {"METE": [], "METimE": []} for var in [0.0, 0.05, 0.1]}
-    #     for model in ['a', 'b', 'c', 'd', 'e', 'f']
-    # }
 
     results = []
 
     for model in ['a', 'b', 'c', 'd', 'e', 'f']:
-        for var in [0.0, 0.05, 0.1]:
-            for realization in range(100):
+        for var in [0.0, 0.05, 0.1, 0.2]:
+            for realization in range(20):
                 df = three_groups_LV(model, T=10, var=var)
-                censuses = df['census'].unique()[::200] # sample for speed
+
+                # choose only a small number of censuses to do the analysis on
+                censuses = df['census'].unique()[::4]
+
                 print("Number of censuses: ", len(censuses), "\n")
 
-                # Replace with learning new coefficients!
                 y, y_pred, coeffs = set_up_regression(df, var, LV_model=model, regression_type="global")
                 r2_transition = r2_score(y, y_pred)
-
-                #coeffs = coeffs.iloc[1:].reset_index(drop=True) # TODO: check if this now works well together with find_extremes
                 coeffs = coeffs['Coefficient'].tolist()
 
                 for census in censuses:
@@ -473,7 +547,7 @@ if __name__ == "__main__":
                     macro_mete = {'N/S': float(X['N_t'] / X['S_t'])}
                     macro_metime = {
                         'N/S': float(X['N_t'] / X['S_t']),
-                        'dN': input_census['dN'].unique()[0]
+                        'dN/S': input_census['dN'].unique()[0] / X['S_t']
                     }
 
                     grouped = input_census.groupby('species')['n'].sum()
@@ -483,58 +557,46 @@ if __name__ == "__main__":
                     functions_mete = [f_1]
                     initial_lambdas_mete = make_initial_guess(X, 'METE')
                     lambdas_mete = perform_optimization(initial_lambdas_mete, functions_mete, macro_mete, X, [])
-                    predicted_mete, rmse_mete, aic_mete = compare_SADs(lambdas_mete, functions_mete, X, [], empirical_RAP, 'METE',
+                    predicted_mete, mae_mete, aic_mete, entropy_mete = compare_SADs(lambdas_mete, functions_mete, X, [], empirical_RAP, 'METE',
                                                                model, census, plot=False)
-                    #aic_results[model][var]['METE'].append(aic_mete)
 
                     # METimE
                     functions_metime = [f_1, dn]
                     initial_lambdas_metime = make_initial_guess(X, 'METimE')
                     lambdas_metime = perform_optimization(initial_lambdas_metime, functions_metime, macro_metime, X, coeffs)
-                    predicted_metime, rmse_metime, aic_metime = compare_SADs(lambdas_metime, functions_metime, X, coeffs,
+                    predicted_metime, mae_metime, aic_metime, entropy_metime = compare_SADs(lambdas_metime, functions_metime, X, coeffs,
                                                                    empirical_RAP, 'METimE', model, census, plot=False)
-                    #aic_results[model][var]['METimE'].append(aic_metime)
 
                     # Plot
                     length_RAD = min(len(empirical_RAP), len(predicted_mete), len(predicted_metime))
                     empirical_RAP = empirical_RAP[:length_RAD]
-                    if census == 1802 and var == 0 and realization == 0:
-                        plot_combined_SAD(empirical_RAP, predicted_mete, predicted_metime, model, var, census)
+
+                    if var == 0 and realization == 0:
+                        plot_combined_SAD(empirical_RAP, predicted_mete, predicted_metime, model, var, census, macro_metime)
 
                     results.append({
                         'model': model,
                         'var': var,
                         'AIC_mete': aic_mete,
-                        'rmse_mete': rmse_mete,
-                        'rmse_metime': rmse_metime,
+                        'MAE_mete': mae_mete,
+                        'entropy_mete': entropy_mete,
                         'AIC_metime': aic_metime,
+                        'MAE_metime': mae_metime,
+                        'entropy_metime': entropy_metime,
                         'N/S': macro_mete['N/S'],
-                        'dN': macro_metime['dN'],
+                        'dN/S': macro_metime['dN/S'],
                         'r^2_transition': r2_transition
                     })
 
-        # # --- Save Table with AIC Means and CIs ---
-        # rows = []
-        # for model in aic_results:
-        #     for var in aic_results[model]:
-        #         row = {'model': model, 'var': var}
-        #         for method in ['METE', 'METimE']:
-        #             aics = aic_results[model][var][method]
-        #             if len(aics) > 1:
-        #                 mean_aic = np.mean(aics)
-        #                 ci = t.interval(0.95, len(aics) - 1, loc=mean_aic,
-        #                                 scale=np.std(aics, ddof=1) / np.sqrt(len(aics)))
-        #                 row[f'{method}_mean'] = round(mean_aic, 2)
-        #                 row[f'{method}_CI_lower'] = round(ci[0], 2)
-        #                 row[f'{method}_CI_upper'] = round(ci[1], 2)
-        #             else:
-        #                 row[f'{method}_mean'] = row[f'{method}_CI_lower'] = row[f'{method}_CI_upper'] = np.nan
-        #         rows.append(row)
+    results_df = pd.DataFrame(results)
+    results_df.to_csv("results/METimE_vs_METE_summary.csv", index=False)
 
-        # aic_table = pd.DataFrame(rows)
-        # os.makedirs("results", exist_ok=True)
-        # aic_table.to_csv("results/AIC_summary.csv", index=False)
-        # print(aic_table)
+    # Create and print latex tables
+    latex_table1 = generate_r2_table(results_df)
+    print(latex_table1)
+    print("\n" + "-" * 80 + "\n")
 
-        results_df = pd.DataFrame(results)
-        results_df.to_csv("results/METimE_vs_METE_summary.csv", index=False)
+    latex_table2 = generate_aic_mae_entropy_table(results_df)
+    print(latex_table2)
+
+
