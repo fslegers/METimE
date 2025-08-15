@@ -522,6 +522,7 @@ def check_constraints(lambdas, input, functions, alphas, betas):
     }
 
     Z = partition_function(lambdas, functions, X, alphas, betas)
+    print("Z (quadrat): {}".format(Z))
 
     absolute_errors = []
     percentage_errors = []

@@ -131,7 +131,7 @@ def constraint(f_k, lambdas, functions, F_k, X, coeffs):
 
 
 def perform_optimization(lambdas, functions, macro_var, X, coeffs):
-    # Collect all constraints
+    # TODO: check if the order of functions and constraints is always the same!
     constraints = [{
         'type': 'eq',
         'fun': lambda lambdas, functions=functions, f_k=f, F_k=macro_var[name], X=X, coeffs=coeffs:
@@ -477,6 +477,7 @@ def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var)
 
 
 def generate_aic_mae_entropy_table(df):
+    #TODO: also include fraction of times that METimE outperformed METE
     metrics = [
         'AIC_mete', 'MAE_mete', 'entropy_mete',
         'AIC_metime', 'MAE_metime', 'entropy_metime'

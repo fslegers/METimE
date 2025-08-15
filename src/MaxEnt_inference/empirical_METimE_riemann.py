@@ -3,26 +3,24 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
-from src.MaxEnt_inference.empirical_METimE_quadrat import check_constraints, get_rank_abundance
+from src.MaxEnt_inference.empirical_METimE_quadrat import get_rank_abundance
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from src.MaxEnt_inference.empirical_METimE_quadrat import get_empirical_RAD
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
 
 import warnings
 
 warnings.filterwarnings("ignore")
 
 
-def partition_function(lambdas, func_vals, de=0.05):
+def partition_function(lambdas, func_vals):
     lambdas = np.asarray(lambdas).reshape(-1, 1, 1)
     exponent_matrix = np.sum(-lambdas * func_vals, axis=0)
     Z = np.exp(exponent_matrix).sum()
-
-    if de is not None:
-        Z *= de
 
     if np.isclose(Z, 0.0, atol=1e-12):
         print("Invalid values detected in Z")
@@ -51,13 +49,13 @@ def entropy(lambdas, func_vals, de, scales=[1,1,1,1]):
     lambdas = lambdas * scales
 
     # Partition function Z
-    Z = partition_function(lambdas, func_vals, de=de)
+    Z = partition_function(lambdas, func_vals)
 
     # Ecosystem structure function R
     R = ecosystem_structure_function(lambdas, func_vals, Z)
 
     # Negative shannon entropy (because we minimize instead of maximize)
-    H = np.sum(np.where(R > 0, R * np.log(R), 0)) * de # Only compute log(R) where R > 0 and put 0 otherwise
+    H = np.sum(np.where(R > 0, R * np.log(R), 0)) # Only compute log(R) where R > 0 and put 0 otherwise
 
     # Safety check
     if np.isnan(H) or np.isinf(H):
@@ -83,13 +81,17 @@ def make_initial_guess(X):
     S, N, E = int(X['S_t']), int(X['N_t']), float(X['E_t'])
     interval = [1.0 / N, S / N]
 
-    beta = root_scalar(beta_function, x0=0.001, args=(S, N), method='brentq', bracket=interval)
+    try:
+        beta = root_scalar(beta_function, x0=0.001, args=(S, N), method='brentq', bracket=interval)
+        l2 = S / (E - N)
+        l1 = beta.root - l2
 
-    l2 = S / (E - N)
-    l1 = beta.root - l2
+        if l1 < 0 or l2 < 0:  # Assumption based on "Derivations of the Core Functions of METE": l1 and l2 are strictly positive
+            l1 = 0.1  # this assumption comes from somewhere else but not sure where
+            l2 = 0.01
 
-    if l1 < 0 or l2 < 0: # Assumption based on "Derivations of the Core Functions of METE": l1 and l2 are strictly positive
-        l1 = 0.1         # this assumption comes from somewhere else but not sure where
+    except:
+        l1 = 0.1
         l2 = 0.01
 
     return [l1, l2, 0, 0]
@@ -102,13 +104,13 @@ def single_constraint(lambdas, func_vals, func_index, target_value, de, scales=[
     lambdas = lambdas * scales
 
     # Partition function Z
-    Z = partition_function(lambdas, func_vals, de=de)
+    Z = partition_function(lambdas, func_vals)
 
     # Ecosystem structure function R
     R = ecosystem_structure_function(lambdas, func_vals, Z)
 
     # Expected value of f_k under R
-    expected_value = np.sum(R * func_vals[func_index]) * de
+    expected_value = np.sum(R * func_vals[func_index])
 
     # Safety check
     if np.isnan(expected_value) or np.isinf(expected_value):
@@ -151,7 +153,7 @@ def compute_lambda_bounds(min_f, max_f, max_exp=400):
 
     return (lower_bound, upper_bound)
 
-def run_optimization(lambdas, macro_var, X, func_vals, de):
+def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
     lambdas = np.asarray(lambdas, dtype=float)
 
     if len(lambdas) == 4:
@@ -192,31 +194,34 @@ def run_optimization(lambdas, macro_var, X, func_vals, de):
     # step_size = min_abs_bound / 10
 
     # Collect all constraints
+    constraint_order = ['N/S', 'E/S', 'dN/S', 'dE/S'][:len(lambdas)]
     constraints = [{
         'type': 'eq',
-        'fun': lambda lambdas, F_k=macro_var[name]:
+        'fun': lambda lambdas, F_k=macro_var[name], idx=i:
         single_constraint(lambdas, func_vals, idx, F_k, de, scales)
-    } for idx, name in enumerate(macro_var)]
+    } for i, name in enumerate(constraint_order)]
 
-    # result = minimize(entropy,
-    #                   lambdas,
-    #                   args=(func_vals, de, scales),
-    #                   constraints=constraints,
-    #                   bounds=bounds[:len(lambdas)],
-    #                   method="trust-constr",
-    #                   options={'initial_tr_radius': 0.1,
-    #                            'disp': True,
-    #                            'verbose': 3
-    #                            })
+    if optimizer == 'trust-constr':
+        result = minimize(entropy,
+                          lambdas,
+                          args=(func_vals, de, scales),
+                          constraints=constraints,
+                          bounds=bounds[:len(lambdas)],
+                          method="trust-constr",
+                          options={'initial_tr_radius': 0.1,
+                                   'disp': True,
+                                   'verbose': 3
+                                   })
 
-    # This doesn't change the lambda values at all, ChatGPT advises scaling again :(
-    result = minimize(entropy,
-                      lambdas,
-                      args=(func_vals, de, scales),
-                      constraints=constraints,
-                      bounds=bounds[:len(lambdas)],
-                      method="SLSQP",
-                      options={'disp': True})
+    else:
+        result = minimize(entropy,
+                          lambdas,
+                          args=(func_vals, de, scales),
+                          constraints=constraints,
+                          bounds=bounds[:len(lambdas)],
+                          method="SLSQP",
+                          options={'disp': True,
+                          'verbose': 3})
 
     optimized_lambdas = result.x * scales
 
@@ -367,7 +372,7 @@ def get_function_values(functions, X, alphas, betas, de):
 
     return results, e_vals
 
-def do_polynomial_regression(df):
+def do_polynomial_regression(df, show_plot=False):
     # Select the columns to apply polynomial features
     poly_cols = ['e', 'n', 'S_t', 'N_t', 'E_t']
 
@@ -383,9 +388,7 @@ def do_polynomial_regression(df):
     df = pd.concat([df.drop(columns=poly_cols), poly_df], axis=1)
 
     # Drop 'tree_id' and dN/S and dE/S columns
-    df = df.drop(columns=['TreeID', 'dN/S', 'dE/S'])
-    if 'dS' in df.columns:
-        df = df.drop(columns=['dS'])
+    df = df.drop(columns=['TreeID', 'dN/S', 'dE/S', 'dS'], errors='ignore')
 
     # Group by (t, species_id) and sum all features
     df_grouped = df.groupby(['census', 'species']).sum().reset_index()
@@ -428,14 +431,23 @@ def do_polynomial_regression(df):
         output.append(coeff_df)
         output.append(r2)
 
+        if show_plot:
+            plt.scatter(y, y_pred)
+            plt.xlabel("Observed")
+            plt.ylabel("Predicted")
+            plt.title(f"Polynomial Regression: R2 = {r2:.2f}")
+            plt.show()
+
+
     return output
 
-def evaluate_model(lambdas, X, func_vals, empirical_rad):
-    Z = partition_function(lambdas, func_vals, de)
+def evaluate_model(lambdas, X, func_vals, empirical_rad, de, constraint_errors):
+    Z = partition_function(lambdas, func_vals)
     R = ecosystem_structure_function(lambdas, func_vals, Z)
 
     # Compute SAD
     sad = np.sum(R, axis=1)
+    print("Sum of sad: {}".format(np.sum(sad)))
 
     # Resize to match empirical_rad length
     rad = get_rank_abundance(sad, X)
@@ -445,16 +457,21 @@ def evaluate_model(lambdas, X, func_vals, empirical_rad):
     # MEA
     mae = mean_absolute_error(empirical_rad, rad)
 
-    # AIC
-    eps = 1e-10
-    log_probs = np.log(sad[rad - 1] + eps)  # -1 for indexing
-    log_likelihood = np.sum(log_probs)
-    k = len(lambdas)
-    aic = -2 * log_likelihood + 2 * k
+    # RMSE
+    rmse = root_mean_squared_error(empirical_rad, rad)
+
+    k = len(lambdas) + 1
+    log_likelihood = 0
+    for i in range(len(empirical_rad)):
+        n_i = int(empirical_rad[i])
+        p_i = max(sad[n_i - 1], 1e-8)
+        log_likelihood += np.log(p_i)
+    aic = 2 * k - 2 * log_likelihood
 
     results_data = {
         'MAE': [mae],
         'AIC': [aic],
+        'RMSE': [rmse]
     }
 
     # Add lambdas to dictionary
@@ -470,7 +487,57 @@ def evaluate_model(lambdas, X, func_vals, empirical_rad):
     return results_df, rad
 
 
-def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name):
+def check_constraints(lambdas, input, func_vals):
+    """
+    Returns the error on constraints given some lambda values
+    Given in percentage of the observed value
+    """
+    S, N, E = (int(input['S_t'].drop_duplicates().iloc[0]),
+               int(input['N_t'].drop_duplicates().iloc[0]),
+               input['E_t'].drop_duplicates().iloc[0])
+
+    X = {
+        'S_t': S,
+        'N_t': N,
+        'E_t': E
+    }
+
+    macro_var = {
+        'N/S': X['N_t'] / X['S_t'],
+        'E/S': X['E_t'] / X['S_t'],
+        'dN/S': input['dN/S'].unique()[0],
+        'dE/S': input['dE/S'].unique()[0]
+    }
+
+    Z = partition_function(lambdas, func_vals)
+    R = ecosystem_structure_function(lambdas, func_vals, Z)
+
+    absolute_errors = []
+    percentage_errors = []
+
+    constraint_order = ['N/S', 'E/S', 'dN/S', 'dE/S']
+    for i, name in enumerate(constraint_order):
+        val = macro_var[name]
+        # Expected value of f_k under R
+        expected_value = np.sum(R * func_vals[i])
+
+        # Compute constraint error
+        abs_error = np.abs(expected_value - val)
+        pct_error = abs_error / np.abs(val) * 100
+
+        absolute_errors.append(abs_error)
+        percentage_errors.append(pct_error)
+
+    print("\n Errors on constraints:")
+    print(f"{'Constraint':<10} {'Abs Error':>15} {'% Error':>15}")
+    print("-" * 42)
+    for key, abs_err, pct_err in zip(macro_var.keys(), absolute_errors, percentage_errors):
+        print(f"{key:<10} {abs_err:15.6f} {pct_err:15.2f}")
+
+    return absolute_errors
+
+
+def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, use_log=False):
     ranks = np.arange(1, len(empirical_rad) + 1)
 
     # Define custom colors
@@ -494,7 +561,16 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name):
     plt.plot(ranks, METimE_rad, '^--', color=redish, markersize=6, linewidth=2, label='METimE')
 
     plt.xlabel("Rank", fontsize=16)
-    plt.ylabel("Abundance", fontsize=16)
+
+    # Handle log scale
+    if use_log:
+        plt.yscale("log") # base is 10
+        plt.gca().yaxis.set_major_formatter(ScalarFormatter())
+        ylabel = r"$\log_{10}(\mathrm{Abundance})$"
+    else:
+        ylabel = "Abundance"
+
+    plt.ylabel(ylabel, fontsize=16)
 
     plt.xticks(fontsize=14)
     plt.yticks(fontsize=14)
@@ -505,22 +581,30 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name):
 
     save_path = f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{save_name}.png'
     os.makedirs("results", exist_ok=True)
-    plt.savefig(save_path, dpi=300)
-    plt.close()
 
-    pass
+    if save_name is not None:
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for ext in ['_quadrat_1']:
+    for i in range(0, 12):
+        if i == 9:
+            break
+
+        ext = f'_quadrat_{i}'
 
         # Load data
         input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
         functions = get_functions()
 
         # Compute polynomial coefficients
-        alphas, _, betas, _ = do_polynomial_regression(input)
+        alphas, r2_dn, betas, r2_de = do_polynomial_regression(input)
+        r2s = pd.DataFrame({'r2_dn': [r2_dn], 'r2_de': [r2_de]})
+        r2s.to_csv(f'empirical_BCI_r2_tf{ext}.csv', index=False)
         alphas = alphas['Coefficient'].values
         betas = betas['Coefficient'].values
 
@@ -570,8 +654,8 @@ if __name__ == "__main__":
             )
             print("Optimized lambdas (METE): {}".format(METE_lambdas))
             METE_lambdas = np.append(METE_lambdas, [0, 0])
-            constraint_errors = check_constraints(METE_lambdas, input_census, functions, alphas, betas)
-            METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad)
+            constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
+            METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad, de, constraint_errors)
             print(f"AIC: {METE_results['AIC'].values[0]}, MAE: {METE_results['MAE'].values[0]}")
 
             #######################################
@@ -581,8 +665,8 @@ if __name__ == "__main__":
             print("----------METimE----------")
             METimE_lambdas = run_optimization(METE_lambdas, macro_var, X, func_vals, de)
             print("Optimized lambdas: {}".format(METimE_lambdas))
-            constraint_errors = check_constraints(METimE_lambdas, input_census, functions, alphas, betas)
-            METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad)
+            constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
+            METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, de, constraint_errors)
             print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
 
             ##########################################
@@ -592,11 +676,13 @@ if __name__ == "__main__":
                 'census': census,
                 'METE_AIC': METE_results['AIC'].values[0],
                 'METE_MAE': METE_results['MAE'].values[0],
+                'METE_RMSE': METE_results['RMSE'].values[0],
                 'METimE_AIC': METimE_results['AIC'].values[0],
-                'METimE_MAE': METimE_results['MAE'].values[0]
+                'METimE_MAE': METimE_results['MAE'].values[0],
+                'METimE_RMSE': METimE_results['RMSE'].values[0]
             })
 
-            plot_RADs(empirical_rad, METE_rad, METimE_rad, f'quad_{ext}_census_{census}')
+            plot_RADs(empirical_rad, METE_rad, METimE_rad, f'quad_{ext}_census_{census}', use_log=True)
 
         results_df = pd.DataFrame(results_list)
         results_df.to_csv(f'empirical_BCI_result_df{ext}.csv', index=False)

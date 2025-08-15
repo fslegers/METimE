@@ -4,16 +4,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.optimize import fsolve
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+
+from src.MaxEnt_inference.empirical_METimE_riemann import run_optimization as riemann_optimization
+from src.MaxEnt_inference.empirical_METimE_riemann import get_empirical_RAD, evaluate_model, get_function_values, make_initial_guess, plot_RADs, do_polynomial_regression, get_functions, check_constraints
 
 from src.MaxEnt_inference import zero_point_METE
 import sys
 import os
 import random
-
-from src.MaxEnt_inference import empirical_METimE_quadrat as METimE
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -145,7 +143,7 @@ def perform_event(tree_ids, species_ids, metabolic_rates, abundances, next_tree_
 
     else: # Migration
         prob_new_species = np.exp(-params['mu_meta'] * X['S'] - np.euler_gamma)
-        if np.random.rand() < prob_new_species:
+        if np.random.rand() < prob_new_species or len(tree_ids) == 0:
             # Create a new species
             new_species_id = max(species_ids) + 1 if len(species_ids) > 0 else 0
             tree_ids = np.append(tree_ids, next_tree_id)
@@ -169,27 +167,6 @@ def perform_event(tree_ids, species_ids, metabolic_rates, abundances, next_tree_
     return tree_ids, species_ids, metabolic_rates, abundances, next_tree_id, X
 
 
-# def plot_community_histograms(community, X, t):
-#     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-#
-#     # Histogram for 'e'
-#     axes[0].hist(community['e'], bins=20, color='skyblue', edgecolor='black')
-#     axes[0].set_title('Histogram of e')
-#     axes[0].set_xlabel('e')
-#     axes[0].set_ylabel('Frequency')
-#
-#     # Histogram for 'n'
-#     axes[1].hist(community['n'], bins=20, color='salmon', edgecolor='black')
-#     axes[1].set_title('Histogram of n')
-#     axes[1].set_xlabel('n')
-#     axes[1].set_ylabel('Frequency')
-#
-#     # Main title with observation time
-#     fig.suptitle(f'Community Metabolic State at Time {t}', fontsize=14)
-#     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-#     plt.show()
-
-
 def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, max_iter, obs_interval, save_final_state=False):
     # some preparations
     species_ids = np.zeros(int(species_indices[-1]), dtype=int)
@@ -201,21 +178,16 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, max_i
     observation_times = np.arange(0, t_max, obs_interval)
     obs_pointer = 0
 
-    # # create df of individual trees
-    # community = pd.DataFrame({
-    #     'Tree_ID': tree_id_list,
-    #     'Species_ID': species_ids,
-    #     'e': metabolic_rates
-    # })
-    # community['n'] = community['Species_ID'].map(community['Species_ID'].value_counts())
-
     # Initialization
     tree_ids = np.array(tree_id_list)
     species_ids = np.array(species_ids)
     metabolic_rates = np.array(metabolic_rates)
     abundances = dict(Counter(species_ids))
 
-    next_tree_id = tree_ids.max() + 1
+    try:
+        next_tree_id = tree_ids.max() + 1
+    except:
+        next_tree_id = 0
 
     # Compute state variables and event rates
     X = {'S':len(np.unique(species_ids)), 'N': len(np.unique(tree_ids)), 'E': sum(metabolic_rates)}
@@ -229,11 +201,13 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, max_i
     n_iter = 0
     while t < t_max and n_iter < max_iter:
         # Sample event time
-        u = np.random.uniform(0, 1)
-        time_until_event = -np.log(u) / R
+        if len(tree_id_list) == 0:
+            time_until_event = 0
+        else:
+            u = np.random.uniform(0, 1)
+            time_until_event = -np.log(u) / R
         t += time_until_event
         n_iter += 1
-        #print(n_iter, t)
 
         # In case the event happens *after* the current observation time, save a snapshot of the community
         while obs_pointer < len(observation_times) and t > observation_times[obs_pointer]:
@@ -249,14 +223,8 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, max_i
                 'e': metabolic_rates.copy()
             })
 
-            # Plot histogram of n and e
-            #plot_community_histograms(community, X, observation_times[obs_pointer])
-
             # Progress observation time
             obs_pointer += 1
-
-        # if obs_pointer >= len(observation_times):
-        #     break
 
         # Update individual metabolic rates
         metabolic_rates, X = update_metabolic_rates(metabolic_rates, X, time_until_event, p)
@@ -269,7 +237,7 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, max_i
         event = what_event_happened(birth_rates, death_rates, migration_rates, R, q)
         tree_ids, species_ids, metabolic_rates, abundances, next_tree_id, X = perform_event(tree_ids, species_ids, metabolic_rates, abundances, next_tree_id, X, event, p)
 
-    # Flatten list of snapshowts with one row per individual per time step              # TODO: should also save species_id and tree_id!
+    # Flatten list of snapshowts with one row per individual per time step
     rows = []
     for snap in snapshots:
         n_individuals = len(snap['e'])
@@ -313,97 +281,36 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max, max_i
     return df
 
 
-def plot_state_var(df):
+def plot_state_var(df, frac):
     # Create three horizontally aligned subplots
     fig, axes = plt.subplots(ncols=3, figsize=(18, 5), sharex=True)
 
     # Plot S vs time
     axes[0].plot(df['t'], df['S'], color='tab:blue', marker='o')
-    axes[0].set_title('S (Entropy) vs Time')
-    axes[0].set_xlabel('Time')
-    axes[0].set_ylabel('S (Entropy)')
+    #axes[0].set_title('S (Species count) vs Time')
+    axes[0].set_xlabel('time (t)')
+    axes[0].set_ylabel('S_t')
     axes[0].grid(True)
 
     # Plot N vs time
     axes[1].plot(df['t'], df['N'], color='tab:green', marker='s')
-    axes[1].set_title('N (Abundance) vs Time')
-    axes[1].set_xlabel('Time')
-    axes[1].set_ylabel('N (Abundance)')
+    #axes[1].set_title('N (Abundance) vs Time')
+    axes[1].set_xlabel('time (t)')
+    axes[1].set_ylabel('N_t')
     axes[1].grid(True)
 
     # Plot E vs time
     axes[2].plot(df['t'], df['E'], color='tab:red', marker='^')
-    axes[2].set_title('E (Energy) vs Time')
-    axes[2].set_xlabel('Time')
-    axes[2].set_ylabel('E (Energy)')
+    #axes[2].set_title('E (Energy) vs Time')
+    axes[2].set_xlabel('time (t)')
+    axes[2].set_ylabel('E_t')
     axes[2].grid(True)
 
     # Adjust layout
     plt.tight_layout()
-    plt.show()
-
-
-def do_polynomial_regression(df):
-    # Select the columns to apply polynomial features
-    poly_cols = ['e', 'n', 'S', 'N', 'E']
-
-    # Generate polynomial features
-    poly = PolynomialFeatures(degree=3, include_bias=False)
-    poly_features = poly.fit_transform(df[poly_cols])
-
-    # Create a new DataFrame with polynomial features
-    poly_feature_names = poly.get_feature_names_out(poly_cols)
-    poly_df = pd.DataFrame(poly_features, columns=poly_feature_names, index=df.index)
-
-    # Concatenate polynomial features back to the original DataFrame
-    df = pd.concat([df.drop(columns=poly_cols), poly_df], axis=1)
-
-    # Drop 'tree_id'
-    if 'tree_id' in df.columns:
-        df = df.drop(columns='tree_id')
-
-    # Group by (t, species_id) and sum all features
-    df_grouped = df.groupby(['t', 'species_id']).sum().reset_index()
-
-    # Now fit the linear regression model
-    dn_obs = df_grouped['dn']
-    de_obs = df_grouped['de']
-    X = df_grouped.drop(columns=['t', 'species_id', 'dn', 'de'])
-
-    # Standardize features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    output = []
-    for y in[dn_obs, de_obs]:
-        model = LinearRegression()
-        model.fit(X_scaled, y)
-        y_pred = model.predict(X_scaled)
-
-        # De-standardize coefficients
-        beta_std = model.coef_
-        mu = scaler.mean_
-        sigma = scaler.scale_
-
-        beta_orig = beta_std / sigma
-        intercept_orig = model.intercept_ - np.sum((beta_std * mu) / sigma)
-
-        # Combine into DataFrame
-        coeff_df = pd.DataFrame({
-            'Feature': poly_feature_names,
-            'Coefficient': beta_orig
-        })
-
-        # Add intercept as a separate row (optional but useful)
-        coeff_df.loc[len(coeff_df)] = ['Intercept', intercept_orig]
-
-        # Calculate r2
-        r2 = r2_score(y, y_pred)
-
-        output.append(coeff_df)
-        output.append(r2)
-
-    return output
+    #plt.show()
+    plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_BCI_state_variables_{frac}.png')
+    plt.close()
 
 def do_dynaMETE_regression(df):
     """
@@ -413,73 +320,47 @@ def do_dynaMETE_regression(df):
     coeffs, r2_dn, r2_de = 0, 0, 0
     return coeffs, r2_de, r2_de
 
-def fit_transition_functions(df):
-    # METimE
-    df_METimE = df.copy()
-    coeffs_dn, r2_dn, coeffs_de, r2_de = do_polynomial_regression(df_METimE)
-
-    # DynaMETE
-    df_dynaMETE = df.copy()
-    coeffs_dynaMETE, r2_dynaMETE_dn, r2_dynaMETE_de = do_dynaMETE_regression(df_dynaMETE)
-
-    return [coeffs_dn, r2_dn, coeffs_de, r2_de], [coeffs_dynaMETE, r2_dynaMETE_dn, r2_dynaMETE_de]
-
-def do_maxent_inference(df, alphas, betas):
-    functions = METimE.get_functions()
+def get_empirical_RAD(df, census):
+    df = df[df['census'] == census]
+    df = df[['species', 'n']].drop_duplicates()
 
     # Create rank abundance distribution
-    df_rad = df[['species_id', 'n']].drop_duplicates()
-    df_rad = df_rad.sort_values(by='n', ascending=False).reset_index(drop=True)
-    df_rad['rank'] = df_rad.index + 1
-    empirical_rad = df_rad[['rank', 'n']].rename(columns={'n': 'abundance'})
+    df = df.sort_values(by='n', ascending=False).reset_index(drop=True)
+    df['rank'] = df.index + 1
+    rad = df[['rank', 'n']].rename(columns={'n': 'abundance'})
 
-    df = df.rename(columns={'t': 'census', 'S': 'S_t', 'N': 'N_t', 'E': 'E_t'})
-    df = df[['census', 'e', 'n', 'S_t', 'N_t', 'E_t', 'dN/S', 'dE/S']]
+    return rad
 
-    mete_aics, mete_maes, metime_aics, metime_maes = [], [], [], []
 
-    for census in df['census'].unique():
-        print(f"\n Census: {census} \n")
-        input_census = df[df['census'] == census]
+def remove_fraction(frac, metabolic_rates, species_indices, tree_id_list):
+    # Remove fraction of community
+    # indices to remove
+    indices_to_remove = np.random.choice(len(tree_id_list), int(frac * len(tree_id_list)), replace=False)
 
-        X = input_census[[
-            'S_t', 'N_t', 'E_t',
-        ]].drop_duplicates().iloc[0]
+    # remove from tree_id_list and metabolic_rates
+    # create species_id from species_indices
+    species_id = np.empty(len(tree_id_list), dtype=int)
+    for i, start_idx in enumerate(species_indices):
+        end_idx = species_indices[i + 1] if i + 1 < len(species_indices) else len(tree_id_list)
+        species_id[start_idx:end_idx] = i
 
-        macro_var = {
-            'N/S': float(X['N_t'] / X['S_t']),
-            'E/S': float(X['E_t'] / X['S_t']),
-            'dN/S': input_census['dN/S'].unique()[0],
-            'dE/S': input_census['dE/S'].unique()[0]
-        }
+    tree_id_list = np.array([tree for i, tree in enumerate(tree_id_list) if i not in indices_to_remove])
+    metabolic_rates = np.array([rate for i, rate in enumerate(metabolic_rates) if i not in indices_to_remove])
+    species_id = np.array([species for i, species in enumerate(species_id) if i not in indices_to_remove])
 
-        # Make initial guess
-        initial_lambdas = METimE.make_initial_guess(X)
-        print(f"Initial guess (theoretical): {initial_lambdas}")
+    unique_species, counts = np.unique(species_id, return_counts=True)
+    species_indices = np.concatenate(([0], np.cumsum(counts)))
 
-        print("Starting METE for initial guess")
-        METE_lambdas = METimE.run_optimization(initial_lambdas[:2],
-                                                  functions[:2],
-                                                  {'N/S': float(X['N_t'] / X['S_t']),'E/S': float(X['E_t'] / X['S_t'])},
-                                                  X, alphas, betas)
-        print("Optimized lambdas (METE): {}".format(METE_lambdas))
-        METE_lambdas = np.append(METE_lambdas, [0, 0])
-        constraint_errors = METimE.check_constraints(METE_lambdas, input_census, functions, alphas, betas)
-        aic, mae = METimE.evaluate_model(METE_lambdas, functions, X, alphas, betas, empirical_rad['abundance'].values, constraint_errors, 'METE', census)
-        mete_aics.append(aic)
-        mete_maes.append(mae)
+    # recalculate X
+    S = len(species_indices) - 1
+    N = len(tree_id_list)
+    E = metabolic_rates.sum()
+    X = {'S': S, 'N': N, 'E': E}
 
-        # Perform optimization
-        METimE_lambdas = METimE.run_optimization(METE_lambdas, functions, macro_var, X, alphas, betas)
-        print("Optimized lambdas (METimE): {}".format(METimE_lambdas))
-        constraint_errors = METimE.check_constraints(METimE_lambdas, input_census, functions, alphas, betas)
-        aic, mae = METimE.evaluate_model(METimE_lambdas, functions, X, alphas, betas, empirical_rad['abundance'].values, constraint_errors, 'METimE',census)
-        metime_aics.append(aic)
-        metime_maes.append(mae)
+    return metabolic_rates, species_indices, tree_id_list, X
 
-    pass
 
-def run_simulation(X, p, t_max=30, max_iter = 1e08, obs_interval=0.25, start_from_prev=False, save_final_state=False):
+def run_simulation(X, p, frac, n_iter=1, t_max=30, max_iter = 1e08, obs_interval=0.25, start_from_prev=False, save_final_state=False):
     if start_from_prev:
         final_state_file = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/final_community_state.npz"
         data = np.load(final_state_file)
@@ -494,28 +375,136 @@ def run_simulation(X, p, t_max=30, max_iter = 1e08, obs_interval=0.25, start_fro
         metabolic_rates, species_indices, tree_id_list = sample_community(X)
         X['S'], X['N'], X['E'] = len(species_indices) - 1, len(metabolic_rates), sum(metabolic_rates)
 
-    # Generate trajectories of its state variables
-    df = gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=t_max, max_iter = max_iter, obs_interval=obs_interval, save_final_state=save_final_state)
-    plot_state_var(df)
+    metabolic_rates, species_indices, tree_id_list, X = remove_fraction(frac, metabolic_rates, species_indices, tree_id_list)
 
-    # Rescale t
-    df['t'] = (df['t'] * (1 / obs_interval)).astype(int)
+    results_list = []
+    for iter in range(n_iter):
+        # Generate trajectories of its state variables
+        df = gillespie(metabolic_rates, species_indices, tree_id_list, X, p, t_max=t_max, max_iter = max_iter, obs_interval=obs_interval, save_final_state=save_final_state)
 
-    # Add dn and de
-    df = df.sort_values(by=['tree_id', 't'])
-    df['dn'] = df.groupby('tree_id')['n'].shift(-1) - df['n']
-    df['de'] = df.groupby('tree_id')['e'].shift(-1) - df['e']
+        if iter == 0:
+            plot_state_var(df, frac)
 
-    # Add dN/S and dE/S
-    df_maxent = df.drop(columns=['dn', 'de'])
-    df_maxent['dN/S'] = (df_maxent.groupby('tree_id')['N'].shift(-1) - df_maxent['N']) / df_maxent['S']
-    df_maxent['dE/S'] = (df_maxent.groupby('tree_id')['E'].shift(-1) - df_maxent['E']) / df_maxent['S']
-    df_maxent = df_maxent.dropna()
+        # Rescale t
+        df['t'] = (df['t'] * (1 / obs_interval)).astype(int)
 
-    METimE_output, _ = fit_transition_functions(df.dropna())
-    aic, mae = do_maxent_inference(df_maxent, list(METimE_output[0]['Coefficient'].values), list(METimE_output[2]['Coefficient'].values))
+        # Add dn and de
+        df = df.sort_values(by=['tree_id', 't'])
+        df['dn'] = df.groupby('tree_id')['n'].shift(-1) - df['n']
+        df['de'] = df.groupby('tree_id')['e'].shift(-1) - df['e']
 
-    return METimE_output[1], aic, mae
+        df['dN/S'] = (df.groupby('tree_id')['N'].shift(-1) - df['N']) / df['S']
+        df['dE/S'] = (df.groupby('tree_id')['E'].shift(-1) - df['E']) / df['S']
+        df = df.dropna()
+
+        # Rename columns
+        df = df.rename(columns={
+            'S': 'S_t',
+            'N': 'N_t',
+            'E': 'E_t',
+            't': 'census',
+            'tree_id': 'TreeID',
+            'species_id': 'species'
+        })
+
+        # Compute polynomial coefficients
+        alphas, r2_dn, betas, r2_de = do_polynomial_regression(df, show_plot=True)
+        r2s = pd.DataFrame({'r2_dn': [r2_dn], 'r2_de': [r2_de]})
+        print(r2s)
+        alphas = alphas['Coefficient'].values
+        betas = betas['Coefficient'].values
+        functions = get_functions()
+
+        # Create list to store results
+        results_list = []
+
+        # For 5 cencuses, perform MaxEnt inference
+        for census in np.linspace(0, len(np.unique(df['census'])) - 1, 4, dtype=int):
+            input_census = df[df['census'] == census]
+
+            X = input_census[[
+                'S_t', 'N_t', 'E_t',
+            ]].drop_duplicates().iloc[0]
+
+            macro_var = {
+                'N/S': float(X['N_t'] / X['S_t']),
+                'E/S': float(X['E_t'] / X['S_t']),
+                'dN/S': input_census['dN/S'].unique()[0],
+                'dE/S': input_census['dE/S'].unique()[0]
+            }
+
+            print("macro_var")
+            print(macro_var)
+
+            # Get empirical rank abundance distribution
+            empirical_rad = get_empirical_RAD(input_census, census)['abundance']
+
+            # Precompute functions(n, e)
+            de = 1.0
+            func_vals, _ = get_function_values(functions, X, alphas, betas, de)
+
+            # Make initial guess
+            initial_lambdas = make_initial_guess(X)
+            print(f"Initial guess (theoretical): {initial_lambdas}")
+
+            #######################################
+            #####            METE             #####
+            #######################################
+
+            # Optimizer SLSQP gives errors because inequality constraints are not satisfiable
+
+            print(" ")
+            print("----------METE----------")
+            METE_lambdas = riemann_optimization(
+                initial_lambdas[:2],
+                {
+                    'N/S': float(X['N_t'] / X['S_t']),
+                    'E/S': float(X['E_t'] / X['S_t'])
+                },
+                X,
+                func_vals[:2],
+                de,
+                optimizer='trust-constr'
+            )
+            print("Optimized lambdas (METE): {}".format(METE_lambdas))
+            METE_lambdas = np.append(METE_lambdas, [0, 0])
+            constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
+            METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad, de, constraint_errors)
+            print(f"AIC: {METE_results['AIC'].values[0]}, MAE: {METE_results['MAE'].values[0]}")
+
+            #######################################
+            #####           METimE            #####
+            #######################################
+            print(" ")
+            print("----------METimE----------")
+            METimE_lambdas = riemann_optimization(METE_lambdas, macro_var, X, func_vals, de, 'trust-constr')
+            print("Optimized lambdas: {}".format(METimE_lambdas))
+            constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
+            METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, de, constraint_errors)
+            print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
+
+            ##########################################
+            #####           Save results         #####
+            ##########################################
+            results_list.append({
+                'census': census,
+                'iter': iter,
+                'METE_AIC': METE_results['AIC'].values[0],
+                'METE_MAE': METE_results['MAE'].values[0],
+                'METE_RMSE': METE_results['RMSE'].values[0],
+                'METimE_AIC': METimE_results['AIC'].values[0],
+                'METimE_MAE': METimE_results['MAE'].values[0],
+                'METimE_RMSE': METimE_results['RMSE'].values[0],
+                'r2_dn': r2s['r2_dn'].values[0],
+                'r2_de': r2s['r2_de'].values[0]
+            })
+
+            if iter == 0:
+                ext = f"simulated_census_{census}_frac_{frac}.png"
+                plot_RADs(empirical_rad, METE_rad, METimE_rad, ext, use_log=True)
+
+    results_df = pd.DataFrame(results_list)
+    results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_BCI_{frac}.csv', index=False)
 
 def load_simple_dynaMETE():
     param = {
@@ -554,20 +543,13 @@ if __name__ == '__main__':
     random.seed(123)
 
     param, X = load_simple_dynaMETE()
-    #_, _, _ = run_simulation(X, param, max_iter = 1e06, save_final_state=True) # Only needed once
+    #_, _, _ = run_simulation(X, param, max_iter = 1e06, save_final_state=True) # Only needed once to get to an equilibrium
 
-    # Then, repeatedly run simulation from equilibrium
-    all_r2, all_aic, all_mae = [], [], []
-    for iter in range(2):
-        r2, aic, mae = run_simulation(X, param, t_max=5.1, obs_interval=0.5, start_from_prev=True)
-        all_r2.append(r2)
-        all_aic.append(aic)
-        all_mae.append(mae)
-
-    # Let's see what happens when we change the death rate
-    param['d'] *= 2
-    run_simulation(X, param, start_from_prev=True)
-    r2, aic, mae = run_simulation(X, param, t_max=5.1, obs_interval=0.5, start_from_prev=True)
+    # Then, repeatedly run simulation from equilibrium, where different fractions of the initial population are removed
+    # thereby disturbing the equilibrium
+    # for each "level of disturbance" (fraction of initial population removed) repeat 5 times
+    for frac in [0.8, 0.6, 0.4, 0.2, 0.0, 1.0]:
+        run_simulation(X, param, frac, n_iter=1, t_max=2.1, obs_interval=0.1, start_from_prev=True)
 
 
 

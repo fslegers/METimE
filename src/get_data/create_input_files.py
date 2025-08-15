@@ -168,7 +168,10 @@ def add_missing_rows(df):
 
 if __name__ == '__main__':
     #load_BCI()
-    for i in range(3, 11):
+    for i in range(10, 12):
         load_BCI_quadrat(i) # index can be 0, 1, ..., 1251
+
+        # There seems to be a problem with quadrat 9, so we exclude it
+        # We have ran it for all other quadrats from 0 to 11
 
 
