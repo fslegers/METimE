@@ -64,6 +64,32 @@ def entropy(lambdas, func_vals, de, scales=[1,1,1,1]):
 
     return H
 
+def entropy_grad(lambdas, func_vals, de, scales=[1,1,1,1]):
+    # Scale back lambdas
+    lambdas = lambdas * scales
+
+    # Partition function
+    Z = partition_function(lambdas, func_vals)
+
+    # Ecosystem structure function
+    R = ecosystem_structure_function(lambdas, func_vals, Z)
+
+    # log(R) (safe)
+    log_R = np.where(R > 0, np.log(R), 0.0)
+
+    # Expected values <f_i> under R
+    expected_values = np.sum(R * func_vals, axis=(1, 2))  # shape (num_funcs,)
+
+    grad = np.zeros(len(lambdas))
+    for i in range(len(lambdas)):
+        fi = func_vals[i]  # same shape as R
+        grad[i] = np.sum(R * (expected_values[i] - fi) * log_R)
+
+    # Rescale back to original parameterization
+    grad = grad / scales
+
+    return grad
+
 def beta_function(beta, S, N):
     """
     Beta function used to generate the initial guess for Lagrange multipliers.
@@ -195,6 +221,7 @@ def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
 
     # Collect all constraints
     constraint_order = ['N/S', 'E/S', 'dN/S', 'dE/S'][:len(lambdas)]
+
     constraints = [{
         'type': 'eq',
         'fun': lambda lambdas, F_k=macro_var[name], idx=i:
@@ -204,6 +231,7 @@ def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
     if optimizer == 'trust-constr':
         result = minimize(entropy,
                           lambdas,
+                          jac=entropy_grad,
                           args=(func_vals, de, scales),
                           constraints=constraints,
                           bounds=bounds[:len(lambdas)],
@@ -216,6 +244,7 @@ def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
     else:
         result = minimize(entropy,
                           lambdas,
+                          jac=entropy_grad,
                           args=(func_vals, de, scales),
                           constraints=constraints,
                           bounds=bounds[:len(lambdas)],
@@ -486,7 +515,6 @@ def evaluate_model(lambdas, X, func_vals, empirical_rad, de, constraint_errors):
 
     return results_df, rad
 
-
 def check_constraints(lambdas, input, func_vals):
     """
     Returns the error on constraints given some lambda values
@@ -535,7 +563,6 @@ def check_constraints(lambdas, input, func_vals):
         print(f"{key:<10} {abs_err:15.6f} {pct_err:15.2f}")
 
     return absolute_errors
-
 
 def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, use_log=False):
     ranks = np.arange(1, len(empirical_rad) + 1)
@@ -588,12 +615,11 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, use_log=False):
     else:
         plt.show()
 
-
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for i in range(0, 12):
-        if i == 9:
-            break
+    for i in range(0, 9):
+        # if i == 9:
+        #     break
 
         ext = f'_quadrat_{i}'
 
@@ -650,7 +676,8 @@ if __name__ == "__main__":
                 },
                 X,
                 func_vals[:2],
-                de
+                de,
+                optimizer='trust-constr'
             )
             print("Optimized lambdas (METE): {}".format(METE_lambdas))
             METE_lambdas = np.append(METE_lambdas, [0, 0])
@@ -663,7 +690,7 @@ if __name__ == "__main__":
             #######################################
             print(" ")
             print("----------METimE----------")
-            METimE_lambdas = run_optimization(METE_lambdas, macro_var, X, func_vals, de)
+            METimE_lambdas = run_optimization(METE_lambdas, macro_var, X, func_vals, de, optimizer='trust-constr')
             print("Optimized lambdas: {}".format(METimE_lambdas))
             constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
             METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, de, constraint_errors)
@@ -673,7 +700,14 @@ if __name__ == "__main__":
             #####           Save results         #####
             ##########################################
             results_list.append({
+                'quad': ext,
                 'census': census,
+                'N/S': macro_var['N/S'],
+                'E/S': macro_var['E/S'],
+                'dN/S': macro_var['dN/S'],
+                'dE/S': macro_var['dE/S'],
+                'r2_dn': r2_dn,
+                'r2_de': r2_de,
                 'METE_AIC': METE_results['AIC'].values[0],
                 'METE_MAE': METE_results['MAE'].values[0],
                 'METE_RMSE': METE_results['RMSE'].values[0],
@@ -685,4 +719,4 @@ if __name__ == "__main__":
             plot_RADs(empirical_rad, METE_rad, METimE_rad, f'quad_{ext}_census_{census}', use_log=True)
 
         results_df = pd.DataFrame(results_list)
-        results_df.to_csv(f'empirical_BCI_result_df{ext}.csv', index=False)
+        results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/empirical_BCI_df/empirical_BCI_df{ext}.csv', index=False)

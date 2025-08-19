@@ -6,7 +6,7 @@ import pandas as pd
 from scipy.optimize import fsolve
 
 from src.MaxEnt_inference.empirical_METimE_riemann import run_optimization as riemann_optimization
-from src.MaxEnt_inference.empirical_METimE_riemann import get_empirical_RAD, evaluate_model, get_function_values, make_initial_guess, plot_RADs, do_polynomial_regression, get_functions, check_constraints
+from src.MaxEnt_inference.empirical_METimE_riemann import get_empirical_RAD, evaluate_model, get_function_values, make_initial_guess, plot_RADs, do_polynomial_regression, get_functions, check_constraints, f_n, f_ne, f_de
 
 from src.MaxEnt_inference import zero_point_METE
 import sys
@@ -477,7 +477,14 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30, max_iter = 1e08, obs_interval
             #######################################
             print(" ")
             print("----------METimE----------")
-            METimE_lambdas = riemann_optimization(METE_lambdas, macro_var, X, func_vals, de, 'trust-constr')
+            METimE_lambdas = riemann_optimization(
+                METE_lambdas,
+                macro_var,
+                X,
+                func_vals,
+                de,
+                'trust-constr'
+            )
             print("Optimized lambdas: {}".format(METimE_lambdas))
             constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
             METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, de, constraint_errors)
@@ -548,8 +555,8 @@ if __name__ == '__main__':
     # Then, repeatedly run simulation from equilibrium, where different fractions of the initial population are removed
     # thereby disturbing the equilibrium
     # for each "level of disturbance" (fraction of initial population removed) repeat 5 times
-    for frac in [0.8, 0.6, 0.4, 0.2, 0.0, 1.0]:
-        run_simulation(X, param, frac, n_iter=1, t_max=2.1, obs_interval=0.1, start_from_prev=True)
+    for frac in [0.8, 0.6, 0.4, 0.2, 0.0]:
+        run_simulation(X, param, frac, n_iter=10, t_max=2.1, obs_interval=0.1, start_from_prev=True)
 
 
 
