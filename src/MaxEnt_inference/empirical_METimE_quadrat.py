@@ -330,8 +330,12 @@ def compute_bounds(X, alphas, betas):
 
 def run_optimization(lambdas, functions, macro_var, X, alphas, betas):
     # Set bounds and scale all lambas to be of order of magnitude ~10
-    bounds_dn, bounds_de = compute_bounds(X, alphas, betas)
-    values = np.asarray([lambdas[0], lambdas[1], bounds_dn[1], bounds_de[1]], dtype=float)[:len(lambdas)]
+    if len(lambdas) == 4:
+        bounds_dn, bounds_de = compute_bounds(X, alphas, betas)
+        values = np.asarray([lambdas[0], lambdas[1], bounds_dn[1], bounds_de[1]], dtype=float)
+    else:
+        values = np.asarray([lambdas[0], lambdas[1]], dtype=float)
+
     scales = np.where(values != 0,10.0 ** np.floor(np.log10(np.abs(values))),1.0)
     lambdas = lambdas / scales
 
@@ -357,6 +361,7 @@ def run_optimization(lambdas, functions, macro_var, X, alphas, betas):
                       bounds=bounds[:len(lambdas)],
                       method="trust-constr",
                       options={'initial_tr_radius': 0.1,
+                               'gtol': 1e-12,
                                'disp': True,
                                'verbose': 3
                                })
@@ -580,6 +585,11 @@ def get_rank_abundance(sad, X):
     Ensures exactly S_t values by clipping quantiles and handling edge cases.
     """
     S = int(X['S_t']) + 1
+
+    if np.sum(sad) > 0:
+        sad = sad / np.sum(sad)
+    else:
+        sad = np.ones_like(sad) / len(sad)
 
     # Create the discrete distribution
     n_vals = np.arange(1, len(sad) + 1)

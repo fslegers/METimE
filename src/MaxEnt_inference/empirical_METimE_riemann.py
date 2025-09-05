@@ -1,5 +1,5 @@
 import os
-
+import seaborn as sns
 import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
@@ -11,6 +11,7 @@ from src.MaxEnt_inference.empirical_METimE_quadrat import get_empirical_RAD
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
+from src.parametrize_transition_functions.SINDy_like_regression import do_polynomial_regression as sindy
 
 import warnings
 
@@ -41,7 +42,7 @@ def ecosystem_structure_function(lambdas, func_vals, Z):
 
     return R
 
-def entropy(lambdas, func_vals, de, scales=[1,1,1,1]):
+def entropy(lambdas, func_vals, scales=[1,1,1,1]):
     """
     Computes Shannon entropy: -sum R(n,e) * log(R(n,e))
     """
@@ -64,7 +65,7 @@ def entropy(lambdas, func_vals, de, scales=[1,1,1,1]):
 
     return H
 
-def entropy_grad(lambdas, func_vals, de, scales=[1,1,1,1]):
+def entropy_grad(lambdas, func_vals, scales=[1,1,1,1]):
     # Scale back lambdas
     lambdas = lambdas * scales
 
@@ -122,9 +123,10 @@ def make_initial_guess(X):
 
     return [l1, l2, 0, 0]
 
-def single_constraint(lambdas, func_vals, func_index, target_value, de, scales=[1,1,1,1]):
+def single_constraint(lambdas, func_vals, func_index, target_value, weight = 1, scales=[1,1,1,1]):
     """
     Vectorized single constraint calculation
+    Weight determines the relative weight of the constraint
     """
     # Scale back lambdas
     lambdas = lambdas * scales
@@ -144,7 +146,7 @@ def single_constraint(lambdas, func_vals, func_index, target_value, de, scales=[
         expected_value = 1e10
 
     # Return deviation from target
-    return expected_value - target_value
+    return np.abs(expected_value - target_value) / (target_value) * weight
     # TODO: optional scaled down so that all constraints weigh equally
 
 def compute_lambda_bounds(min_f, max_f, max_exp=400):
@@ -179,7 +181,7 @@ def compute_lambda_bounds(min_f, max_f, max_exp=400):
 
     return (lower_bound, upper_bound)
 
-def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
+def run_optimization(lambdas, macro_var, X, func_vals, maxiter=1000, optimizer='SLSQP'):
     lambdas = np.asarray(lambdas, dtype=float)
 
     if len(lambdas) == 4:
@@ -207,9 +209,11 @@ def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
                   (0, 18) / scales[1],
                   bounds_dn / scales[2],
                   bounds_de / scales[3]]
+        weights = [1, 1, 0.01, 0.01]
     else:
         bounds = [(0, 18) / scales[0],
                   (0, 18) / scales[1]]
+        weights = [1, 1]
 
     # TODO: is the upper bound of 18 okay?
 
@@ -225,27 +229,29 @@ def run_optimization(lambdas, macro_var, X, func_vals, de, optimizer='SLSQP'):
     constraints = [{
         'type': 'eq',
         'fun': lambda lambdas, F_k=macro_var[name], idx=i:
-        single_constraint(lambdas, func_vals, idx, F_k, de, scales)
+        single_constraint(lambdas, func_vals, idx, F_k, weights[i], scales)
     } for i, name in enumerate(constraint_order)]
 
     if optimizer == 'trust-constr':
         result = minimize(entropy,
                           lambdas,
                           jac=entropy_grad,
-                          args=(func_vals, de, scales),
+                          args=(func_vals, scales),
                           constraints=constraints,
                           bounds=bounds[:len(lambdas)],
                           method="trust-constr",
-                          options={'initial_tr_radius': 0.1,
+                          options={'maxiter': maxiter,
+                                   'initial_tr_radius': 0.1,
+                                   'gtol': 1e-12,
                                    'disp': True,
-                                   'verbose': 3
+                                   'verbose': 1
                                    })
 
     else:
         result = minimize(entropy,
                           lambdas,
                           jac=entropy_grad,
-                          args=(func_vals, de, scales),
+                          args=(func_vals, scales),
                           constraints=constraints,
                           bounds=bounds[:len(lambdas)],
                           method="SLSQP",
@@ -263,134 +269,237 @@ def f_ne(n, e, X, alphas, betas):
     return n * e
 
 def f_dn(n, e, X, alphas, betas):
-    """
-    expects coefficients alphas are ordened
-    first, order columns: e, n, S, N, E
-    then, polynomial features, order 3, include_bias=False
-    """
-    return (alphas[0] * e +
-    alphas[1] * n +
-    alphas[2] * X['S_t'] +
-    alphas[3] * X['N_t'] +
-    alphas[4] * X['E_t'] +
-    alphas[5] * e ** 2 +
-    alphas[6] * e * n +
-    alphas[7] * e * X['S_t'] +
-    alphas[8] * e * X['N_t'] +
-    alphas[9] * e * X['E_t'] +
-    alphas[10] * n ** 2 +
-    alphas[11] * n * X['S_t'] +
-    alphas[12] * n * X['N_t'] +
-    alphas[13] * n * X['E_t'] +
-    alphas[14] * X['S_t'] ** 2 +
-    alphas[15] * X['S_t'] * X['N_t'] +
-    alphas[16] * X['S_t'] * X['E_t'] +
-    alphas[17] * X['N_t'] ** 2 +
-    alphas[18] * X['N_t'] * X['E_t'] +
-    alphas[19] * X['E_t'] ** 2 +
-    alphas[20] * e ** 3 +
-    alphas[21] * e ** 2 * n +
-    alphas[22] * e ** 2 * X['S_t'] +
-    alphas[23] * e ** 2 * X['N_t'] +
-    alphas[24] * e ** 2 * X['E_t'] +
-    alphas[25] * e * n ** 2 +
-    alphas[26] * e * n * X['S_t'] +
-    alphas[27] * e * n * X['N_t'] +
-    alphas[28] * e * n * X['E_t'] +
-    alphas[29] * e * X['S_t'] ** 2 +
-    alphas[30] * e * X['S_t'] * X['N_t'] +
-    alphas[31] * e * X['S_t'] * X['E_t'] +
-    alphas[32] * e * X['N_t'] ** 2 +
-    alphas[33] * e * X['N_t'] * X['E_t'] +
-    alphas[34] * e * X['E_t'] ** 2 +
-    alphas[35] * n ** 3 +
-    alphas[36] * n ** 2 * X['S_t'] +
-    alphas[37] * n ** 2 * X['N_t'] +
-    alphas[38] * n ** 2 * X['E_t'] +
-    alphas[39] * n * X['S_t'] ** 2 +
-    alphas[40] * n * X['S_t'] * X['N_t'] +
-    alphas[41] * n * X['S_t'] * X['E_t'] +
-    alphas[42] * n * X['N_t'] ** 2 +
-    alphas[43] * n * X['N_t'] * X['E_t'] +
-    alphas[44] * n * X['E_t'] ** 2 +
-    alphas[45] * X['S_t'] ** 3 +
-    alphas[46] * X['S_t'] ** 2 * X['N_t'] +
-    alphas[47] * X['S_t'] ** 2 * X['E_t'] +
-    alphas[48] * X['S_t'] * X['N_t'] ** 2 +
-    alphas[49] * X['S_t'] * X['N_t'] * X['E_t'] +
-    alphas[50] * X['S_t'] * X['E_t'] ** 2 +
-    alphas[51] * X['N_t'] ** 3 +
-    alphas[52] * X['N_t'] ** 2 * X['E_t'] +
-    alphas[53] * X['N_t'] * X['E_t'] ** 2 +
-    alphas[54] * X['E_t'] ** 3 +
-    alphas[55])
+    features = [e, (X['S_t']), n, 1, (e ** (-1)), (e ** (-3/4)), (e ** (-1/2)), (e ** (1/4)), (e ** (1/2)),
+         (e ** (3/4)), (e), (e ** (3/2)), (n ** (1/2)), (n), (n ** (3/4)), (n ** (3/2)), (np.log(n)),
+         (np.log(e)), (X['N_t']), (1/X['N_t']), (X['E_t']), (1/X['E_t']), (e ** (-1))**2,
+         (e ** (-1))*(e ** (-3/4)), (e ** (-1))*(e ** (-1/2)), (e ** (-1))*(e ** (1/4)),
+         (e ** (-1))*(e ** (1/2)), (e ** (-1))*(e ** (3/4)), (e ** (-1))*(e), (e ** (-1))*(e ** (3/2)),
+         (e ** (-1))*(n ** (1/2)), (e ** (-1))*(n), (e ** (-1))*(n ** (3/4)), (e ** (-1))*(n ** (3/2)),
+         (e ** (-1))*(np.log(n)), (e ** (-1))*(np.log(e)), (e ** (-1))*(X['N_t']), (e ** (-1))*(1/X['N_t']),
+         (e ** (-1))*(X['E_t']), (e ** (-1))*(1/X['E_t']), (e ** (-3/4))**2, (e ** (-3/4))*(e ** (-1/2)),
+         (e ** (-3/4))*(e ** (1/4)), (e ** (-3/4))*(e ** (1/2)), (e ** (-3/4))*(e ** (3/4)), (e ** (-3/4))*(e),
+         (e ** (-3/4))*(e ** (3/2)), (e ** (-3/4))*(n ** (1/2)), (e ** (-3/4))*(n), (e ** (-3/4))*(n ** (3/4)),
+         (e ** (-3/4))*(n ** (3/2)), (e ** (-3/4))*(np.log(n)), (e ** (-3/4))*(np.log(e)), (e ** (-3/4))*(X['N_t']),
+         (e ** (-3/4))*(1/X['N_t']), (e ** (-3/4))*(X['E_t']), (e ** (-3/4))*(1/X['E_t']),
+         (e ** (-1/2))**2, (e ** (-1/2))*(e ** (1/4)), (e ** (-1/2))*(e ** (1/2)), (e ** (-1/2))*(e ** (3/4)),
+         (e ** (-1/2))*(e), (e ** (-1/2))*(e ** (3/2)), (e ** (-1/2))*(n ** (1/2)), (e ** (-1/2))*(n),
+         (e ** (-1/2))*(n ** (3/4)), (e ** (-1/2))*(n ** (3/2)), (e ** (-1/2))*(np.log(n)),
+         (e ** (-1/2))*(np.log(e)), (e ** (-1/2))*(X['N_t']), (e ** (-1/2))*(1/X['N_t']), (e ** (-1/2))*(X['E_t']),
+         (e ** (-1/2))*(1/X['E_t']), (e ** (1/4))**2, (e ** (1/4))*(e ** (1/2)),
+         (e ** (1/4))*(e ** (3/4)), (e ** (1/4))*(e), (e ** (1/4))*(e ** (3/2)), (e ** (1/4))*(n ** (1/2)),
+         (e ** (1/4))*(n), (e ** (1/4))*(n ** (3/4)), (e ** (1/4))*(n ** (3/2)), (e ** (1/4))*(np.log(n)),
+         (e ** (1/4))*(np.log(e)), (e ** (1/4))*(X['N_t']), (e ** (1/4))*(1/X['N_t']), (e ** (1/4))*(X['E_t']),
+         (e ** (1/4))*(1/X['E_t']), (e ** (1/2))**2, (e ** (1/2))*(e ** (3/4)), (e ** (1/2))*(e),
+         (e ** (1/2))*(e ** (3/2)), (e ** (1/2))*(n ** (1/2)), (e ** (1/2))*(n), (e ** (1/2))*(n ** (3/4)),
+         (e ** (1/2))*(n ** (3/2)), (e ** (1/2))*(np.log(n)), (e ** (1/2))*(np.log(e)), (e ** (1/2))*(X['N_t']),
+         (e ** (1/2))*(1/X['N_t']), (e ** (1/2))*(X['E_t']), (e ** (1/2))*(1/X['E_t']), (e ** (3/4))**2,
+         (e ** (3/4))*(e), (e ** (3/4))*(e ** (3/2)), (e ** (3/4))*(n ** (1/2)), (e ** (3/4))*(n),
+         (e ** (3/4))*(n ** (3/4)), (e ** (3/4))*(n ** (3/2)), (e ** (3/4))*(np.log(n)),
+         (e ** (3/4))*(np.log(e)), (e ** (3/4))*(X['N_t']), (e ** (3/4))*(1/X['N_t']), (e ** (3/4))*(X['E_t']),
+         (e ** (3/4))*(1/X['E_t']), (e)**2, (e)*(e ** (3/2)), (e)*(n ** (1/2)), (e)*(n), (e)*(n ** (3/4)),
+         (e)*(n ** (3/2)), (e)*(np.log(n)), (e)*(np.log(e)), (e)*(X['N_t']), (e)*(1/X['N_t']), (e)*(X['E_t']),
+         (e)*(1/X['E_t']), (e ** (3/2))**2, (e ** (3/2))*(n ** (1/2)), (e ** (3/2))*(n),
+         (e ** (3/2))*(n ** (3/4)), (e ** (3/2))*(n ** (3/2)), (e ** (3/2))*(np.log(n)),
+         (e ** (3/2))*(np.log(e)), (e ** (3/2))*(X['N_t']), (e ** (3/2))*(1/X['N_t']), (e ** (3/2))*(X['E_t']),
+         (e ** (3/2))*(1/X['E_t']), (n ** (1/2))**2, (n ** (1/2))*(n), (n ** (1/2))*(n ** (3/4)),
+         (n ** (1/2))*(n ** (3/2)), (n ** (1/2))*(np.log(n)), (n ** (1/2))*(np.log(e)), (n ** (1/2))*(X['N_t']),
+         (n ** (1/2))*(1/X['N_t']), (n ** (1/2))*(X['E_t']), (n ** (1/2))*(1/X['E_t']), (n)**2,
+         (n)*(n ** (3/4)), (n)*(n ** (3/2)), (n)*(np.log(n)), (n)*(np.log(e)), (n)*(X['N_t']), (n)*(1/X['N_t']),
+         (n)*(X['E_t']), (n)*(1/X['E_t']), (n ** (3/4))**2, (n ** (3/4))*(n ** (3/2)),
+         (n ** (3/4))*(np.log(n)), (n ** (3/4))*(np.log(e)), (n ** (3/4))*(X['N_t']), (n ** (3/4))*(1/X['N_t']),
+         (n ** (3/4))*(X['E_t']), (n ** (3/4))*(1/X['E_t']), (n ** (3/2))**2, (n ** (3/2))*(np.log(n)),
+         (n ** (3/2))*(np.log(e)), (n ** (3/2))*(X['N_t']), (n ** (3/2))*(1/X['N_t']), (n ** (3/2))*(X['E_t']),
+         (n ** (3/2))*(1/X['E_t']), (np.log(n))**2, (np.log(n))*(np.log(e)), (np.log(n))*(X['N_t']),
+         (np.log(n))*(1/X['N_t']), (np.log(n))*(X['E_t']), (np.log(n))*(1/X['E_t']), (np.log(e))**2,
+         (np.log(e))*(X['N_t']), (np.log(e))*(1/X['N_t']), (np.log(e))*(X['E_t']), (np.log(e))*(1/X['E_t']),
+         (X['N_t'])**2, (X['N_t'])*(1/X['N_t']), (X['N_t'])*(X['E_t']), (X['N_t'])*(1/X['E_t']), (1/X['N_t'])**2,
+         (1/X['N_t'])*(X['E_t']), (1/X['N_t'])*(1/X['E_t']), (X['E_t'])**2, (X['E_t'])*(1/X['E_t']),
+         (1/X['E_t'])**2]
+    result = sum(alpha * f for alpha, f in zip(alphas, features))
+    return np.maximum(result, -n)
 
 def f_de(n, e, X, alphas, betas):
-    return (betas[0] * e +
-    betas[1] * n +
-    betas[2] * X['S_t'] +
-    betas[3] * X['N_t'] +
-    betas[4] * X['E_t'] +
-    betas[5] * e ** 2 +
-    betas[6] * e * n +
-    betas[7] * e * X['S_t'] +
-    betas[8] * e * X['N_t'] +
-    betas[9] * e * X['E_t'] +
-    betas[10] * n ** 2 +
-    betas[11] * n * X['S_t'] +
-    betas[12] * n * X['N_t'] +
-    betas[13] * n * X['E_t'] +
-    betas[14] * X['S_t'] ** 2 +
-    betas[15] * X['S_t'] * X['N_t'] +
-    betas[16] * X['S_t'] * X['E_t'] +
-    betas[17] * X['N_t'] ** 2 +
-    betas[18] * X['N_t'] * X['E_t'] +
-    betas[19] * X['E_t'] ** 2 +
-    betas[20] * e ** 3 +
-    betas[21] * e ** 2 * n +
-    betas[22] * e ** 2 * X['S_t'] +
-    betas[23] * e ** 2 * X['N_t'] +
-    betas[24] * e ** 2 * X['E_t'] +
-    betas[25] * e * n ** 2 +
-    betas[26] * e * n * X['S_t'] +
-    betas[27] * e * n * X['N_t'] +
-    betas[28] * e * n * X['E_t'] +
-    betas[29] * e * X['S_t'] ** 2 +
-    betas[30] * e * X['S_t'] * X['N_t'] +
-    betas[31] * e * X['S_t'] * X['E_t'] +
-    betas[32] * e * X['N_t'] ** 2 +
-    betas[33] * e * X['N_t'] * X['E_t'] +
-    betas[34] * e * X['E_t'] ** 2 +
-    betas[35] * n ** 3 +
-    betas[36] * n ** 2 * X['S_t'] +
-    betas[37] * n ** 2 * X['N_t'] +
-    betas[38] * n ** 2 * X['E_t'] +
-    betas[39] * n * X['S_t'] ** 2 +
-    betas[40] * n * X['S_t'] * X['N_t'] +
-    betas[41] * n * X['S_t'] * X['E_t'] +
-    betas[42] * n * X['N_t'] ** 2 +
-    betas[43] * n * X['N_t'] * X['E_t'] +
-    betas[44] * n * X['E_t'] ** 2 +
-    betas[45] * X['S_t'] ** 3 +
-    betas[46] * X['S_t'] ** 2 * X['N_t'] +
-    betas[47] * X['S_t'] ** 2 * X['E_t'] +
-    betas[48] * X['S_t'] * X['N_t'] ** 2 +
-    betas[49] * X['S_t'] * X['N_t'] * X['E_t'] +
-    betas[50] * X['S_t'] * X['E_t'] ** 2 +
-    betas[51] * X['N_t'] ** 3 +
-    betas[52] * X['N_t'] ** 2 * X['E_t'] +
-    betas[53] * X['N_t'] * X['E_t'] ** 2 +
-    betas[54] * X['E_t'] ** 3 +
-    betas[55])
+    X = dict(X)
+    features = [e, (X['S_t']), n, 1, (e ** (-1)), (e ** (-3/4)), (e ** (-1/2)), (e ** (1/4)), (e ** (1/2)),
+         (e ** (3/4)), (e), (e ** (3/2)), (n ** (1/2)), (n), (n ** (3/4)), (n ** (3/2)), (np.log(n)),
+         (np.log(e)), (X['N_t']), (1/X['N_t']), (X['E_t']), (1/X['E_t']), (e ** (-1))**2,
+         (e ** (-1))*(e ** (-3/4)), (e ** (-1))*(e ** (-1/2)), (e ** (-1))*(e ** (1/4)),
+         (e ** (-1))*(e ** (1/2)), (e ** (-1))*(e ** (3/4)), (e ** (-1))*(e), (e ** (-1))*(e ** (3/2)),
+         (e ** (-1))*(n ** (1/2)), (e ** (-1))*(n), (e ** (-1))*(n ** (3/4)), (e ** (-1))*(n ** (3/2)),
+         (e ** (-1))*(np.log(n)), (e ** (-1))*(np.log(e)), (e ** (-1))*(X['N_t']), (e ** (-1))*(1/X['N_t']),
+         (e ** (-1))*(X['E_t']), (e ** (-1))*(1/X['E_t']), (e ** (-3/4))**2, (e ** (-3/4))*(e ** (-1/2)),
+         (e ** (-3/4))*(e ** (1/4)), (e ** (-3/4))*(e ** (1/2)), (e ** (-3/4))*(e ** (3/4)), (e ** (-3/4))*(e),
+         (e ** (-3/4))*(e ** (3/2)), (e ** (-3/4))*(n ** (1/2)), (e ** (-3/4))*(n), (e ** (-3/4))*(n ** (3/4)),
+         (e ** (-3/4))*(n ** (3/2)), (e ** (-3/4))*(np.log(n)), (e ** (-3/4))*(np.log(e)), (e ** (-3/4))*(X['N_t']),
+         (e ** (-3/4))*(1/X['N_t']), (e ** (-3/4))*(X['E_t']), (e ** (-3/4))*(1/X['E_t']),
+         (e ** (-1/2))**2, (e ** (-1/2))*(e ** (1/4)), (e ** (-1/2))*(e ** (1/2)), (e ** (-1/2))*(e ** (3/4)),
+         (e ** (-1/2))*(e), (e ** (-1/2))*(e ** (3/2)), (e ** (-1/2))*(n ** (1/2)), (e ** (-1/2))*(n),
+         (e ** (-1/2))*(n ** (3/4)), (e ** (-1/2))*(n ** (3/2)), (e ** (-1/2))*(np.log(n)),
+         (e ** (-1/2))*(np.log(e)), (e ** (-1/2))*(X['N_t']), (e ** (-1/2))*(1/X['N_t']), (e ** (-1/2))*(X['E_t']),
+         (e ** (-1/2))*(1/X['E_t']), (e ** (1/4))**2, (e ** (1/4))*(e ** (1/2)),
+         (e ** (1/4))*(e ** (3/4)), (e ** (1/4))*(e), (e ** (1/4))*(e ** (3/2)), (e ** (1/4))*(n ** (1/2)),
+         (e ** (1/4))*(n), (e ** (1/4))*(n ** (3/4)), (e ** (1/4))*(n ** (3/2)), (e ** (1/4))*(np.log(n)),
+         (e ** (1/4))*(np.log(e)), (e ** (1/4))*(X['N_t']), (e ** (1/4))*(1/X['N_t']), (e ** (1/4))*(X['E_t']),
+         (e ** (1/4))*(1/X['E_t']), (e ** (1/2))**2, (e ** (1/2))*(e ** (3/4)), (e ** (1/2))*(e),
+         (e ** (1/2))*(e ** (3/2)), (e ** (1/2))*(n ** (1/2)), (e ** (1/2))*(n), (e ** (1/2))*(n ** (3/4)),
+         (e ** (1/2))*(n ** (3/2)), (e ** (1/2))*(np.log(n)), (e ** (1/2))*(np.log(e)), (e ** (1/2))*(X['N_t']),
+         (e ** (1/2))*(1/X['N_t']), (e ** (1/2))*(X['E_t']), (e ** (1/2))*(1/X['E_t']), (e ** (3/4))**2,
+         (e ** (3/4))*(e), (e ** (3/4))*(e ** (3/2)), (e ** (3/4))*(n ** (1/2)), (e ** (3/4))*(n),
+         (e ** (3/4))*(n ** (3/4)), (e ** (3/4))*(n ** (3/2)), (e ** (3/4))*(np.log(n)),
+         (e ** (3/4))*(np.log(e)), (e ** (3/4))*(X['N_t']), (e ** (3/4))*(1/X['N_t']), (e ** (3/4))*(X['E_t']),
+         (e ** (3/4))*(1/X['E_t']), (e)**2, (e)*(e ** (3/2)), (e)*(n ** (1/2)), (e)*(n), (e)*(n ** (3/4)),
+         (e)*(n ** (3/2)), (e)*(np.log(n)), (e)*(np.log(e)), (e)*(X['N_t']), (e)*(1/X['N_t']), (e)*(X['E_t']),
+         (e)*(1/X['E_t']), (e ** (3/2))**2, (e ** (3/2))*(n ** (1/2)), (e ** (3/2))*(n),
+         (e ** (3/2))*(n ** (3/4)), (e ** (3/2))*(n ** (3/2)), (e ** (3/2))*(np.log(n)),
+         (e ** (3/2))*(np.log(e)), (e ** (3/2))*(X['N_t']), (e ** (3/2))*(1/X['N_t']), (e ** (3/2))*(X['E_t']),
+         (e ** (3/2))*(1/X['E_t']), (n ** (1/2))**2, (n ** (1/2))*(n), (n ** (1/2))*(n ** (3/4)),
+         (n ** (1/2))*(n ** (3/2)), (n ** (1/2))*(np.log(n)), (n ** (1/2))*(np.log(e)), (n ** (1/2))*(X['N_t']),
+         (n ** (1/2))*(1/X['N_t']), (n ** (1/2))*(X['E_t']), (n ** (1/2))*(1/X['E_t']), (n)**2,
+         (n)*(n ** (3/4)), (n)*(n ** (3/2)), (n)*(np.log(n)), (n)*(np.log(e)), (n)*(X['N_t']), (n)*(1/X['N_t']),
+         (n)*(X['E_t']), (n)*(1/X['E_t']), (n ** (3/4))**2, (n ** (3/4))*(n ** (3/2)),
+         (n ** (3/4))*(np.log(n)), (n ** (3/4))*(np.log(e)), (n ** (3/4))*(X['N_t']), (n ** (3/4))*(1/X['N_t']),
+         (n ** (3/4))*(X['E_t']), (n ** (3/4))*(1/X['E_t']), (n ** (3/2))**2, (n ** (3/2))*(np.log(n)),
+         (n ** (3/2))*(np.log(e)), (n ** (3/2))*(X['N_t']), (n ** (3/2))*(1/X['N_t']), (n ** (3/2))*(X['E_t']),
+         (n ** (3/2))*(1/X['E_t']), (np.log(n))**2, (np.log(n))*(np.log(e)), (np.log(n))*(X['N_t']),
+         (np.log(n))*(1/X['N_t']), (np.log(n))*(X['E_t']), (np.log(n))*(1/X['E_t']), (np.log(e))**2,
+         (np.log(e))*(X['N_t']), (np.log(e))*(1/X['N_t']), (np.log(e))*(X['E_t']), (np.log(e))*(1/X['E_t']),
+         (X['N_t'])**2, (X['N_t'])*(1/X['N_t']), (X['N_t'])*(X['E_t']), (X['N_t'])*(1/X['E_t']), (1/X['N_t'])**2,
+         (1/X['N_t'])*(X['E_t']), (1/X['N_t'])*(1/X['E_t']), (X['E_t'])**2, (X['E_t'])*(1/X['E_t']),
+         (1/X['E_t'])**2]
+    result = sum(beta * f for beta, f in zip(betas, features))
+    return np.maximum(result, -e)
 
-def get_functions():
+# def f_dn(n, e, X, alphas, betas):
+#     """
+#     expects coefficients alphas are ordened
+#     first, order columns: e, n, S, N, E
+#     then, polynomial features, order 3, include_bias=False
+#     """
+#     return np.maximum((alphas[0] * e +
+#     alphas[1] * n +
+#     alphas[2] * X['S_t'] +
+#     alphas[3] * X['N_t'] +
+#     alphas[4] * X['E_t'] +
+#     alphas[5] * e ** 2 +
+#     alphas[6] * e * n +
+#     alphas[7] * e * X['S_t'] +
+#     alphas[8] * e * X['N_t'] +
+#     alphas[9] * e * X['E_t'] +
+#     alphas[10] * n ** 2 +
+#     alphas[11] * n * X['S_t'] +
+#     alphas[12] * n * X['N_t'] +
+#     alphas[13] * n * X['E_t'] +
+#     alphas[14] * X['S_t'] ** 2 +
+#     alphas[15] * X['S_t'] * X['N_t'] +
+#     alphas[16] * X['S_t'] * X['E_t'] +
+#     alphas[17] * X['N_t'] ** 2 +
+#     alphas[18] * X['N_t'] * X['E_t'] +
+#     alphas[19] * X['E_t'] ** 2 +
+#     alphas[20] * e ** 3 +
+#     alphas[21] * e ** 2 * n +
+#     alphas[22] * e ** 2 * X['S_t'] +
+#     alphas[23] * e ** 2 * X['N_t'] +
+#     alphas[24] * e ** 2 * X['E_t'] +
+#     alphas[25] * e * n ** 2 +
+#     alphas[26] * e * n * X['S_t'] +
+#     alphas[27] * e * n * X['N_t'] +
+#     alphas[28] * e * n * X['E_t'] +
+#     alphas[29] * e * X['S_t'] ** 2 +
+#     alphas[30] * e * X['S_t'] * X['N_t'] +
+#     alphas[31] * e * X['S_t'] * X['E_t'] +
+#     alphas[32] * e * X['N_t'] ** 2 +
+#     alphas[33] * e * X['N_t'] * X['E_t'] +
+#     alphas[34] * e * X['E_t'] ** 2 +
+#     alphas[35] * n ** 3 +
+#     alphas[36] * n ** 2 * X['S_t'] +
+#     alphas[37] * n ** 2 * X['N_t'] +
+#     alphas[38] * n ** 2 * X['E_t'] +
+#     alphas[39] * n * X['S_t'] ** 2 +
+#     alphas[40] * n * X['S_t'] * X['N_t'] +
+#     alphas[41] * n * X['S_t'] * X['E_t'] +
+#     alphas[42] * n * X['N_t'] ** 2 +
+#     alphas[43] * n * X['N_t'] * X['E_t'] +
+#     alphas[44] * n * X['E_t'] ** 2 +
+#     alphas[45] * X['S_t'] ** 3 +
+#     alphas[46] * X['S_t'] ** 2 * X['N_t'] +
+#     alphas[47] * X['S_t'] ** 2 * X['E_t'] +
+#     alphas[48] * X['S_t'] * X['N_t'] ** 2 +
+#     alphas[49] * X['S_t'] * X['N_t'] * X['E_t'] +
+#     alphas[50] * X['S_t'] * X['E_t'] ** 2 +
+#     alphas[51] * X['N_t'] ** 3 +
+#     alphas[52] * X['N_t'] ** 2 * X['E_t'] +
+#     alphas[53] * X['N_t'] * X['E_t'] ** 2 +
+#     alphas[54] * X['E_t'] ** 3 +
+#     alphas[55]), -n)
+#
+# def f_de(n, e, X, alphas, betas):
+#     return np.maximum((betas[0] * e +
+#     betas[1] * n +
+#     betas[2] * X['S_t'] +
+#     betas[3] * X['N_t'] +
+#     betas[4] * X['E_t'] +
+#     betas[5] * e ** 2 +
+#     betas[6] * e * n +
+#     betas[7] * e * X['S_t'] +
+#     betas[8] * e * X['N_t'] +
+#     betas[9] * e * X['E_t'] +
+#     betas[10] * n ** 2 +
+#     betas[11] * n * X['S_t'] +
+#     betas[12] * n * X['N_t'] +
+#     betas[13] * n * X['E_t'] +
+#     betas[14] * X['S_t'] ** 2 +
+#     betas[15] * X['S_t'] * X['N_t'] +
+#     betas[16] * X['S_t'] * X['E_t'] +
+#     betas[17] * X['N_t'] ** 2 +
+#     betas[18] * X['N_t'] * X['E_t'] +
+#     betas[19] * X['E_t'] ** 2 +
+#     betas[20] * e ** 3 +
+#     betas[21] * e ** 2 * n +
+#     betas[22] * e ** 2 * X['S_t'] +
+#     betas[23] * e ** 2 * X['N_t'] +
+#     betas[24] * e ** 2 * X['E_t'] +
+#     betas[25] * e * n ** 2 +
+#     betas[26] * e * n * X['S_t'] +
+#     betas[27] * e * n * X['N_t'] +
+#     betas[28] * e * n * X['E_t'] +
+#     betas[29] * e * X['S_t'] ** 2 +
+#     betas[30] * e * X['S_t'] * X['N_t'] +
+#     betas[31] * e * X['S_t'] * X['E_t'] +
+#     betas[32] * e * X['N_t'] ** 2 +
+#     betas[33] * e * X['N_t'] * X['E_t'] +
+#     betas[34] * e * X['E_t'] ** 2 +
+#     betas[35] * n ** 3 +
+#     betas[36] * n ** 2 * X['S_t'] +
+#     betas[37] * n ** 2 * X['N_t'] +
+#     betas[38] * n ** 2 * X['E_t'] +
+#     betas[39] * n * X['S_t'] ** 2 +
+#     betas[40] * n * X['S_t'] * X['N_t'] +
+#     betas[41] * n * X['S_t'] * X['E_t'] +
+#     betas[42] * n * X['N_t'] ** 2 +
+#     betas[43] * n * X['N_t'] * X['E_t'] +
+#     betas[44] * n * X['E_t'] ** 2 +
+#     betas[45] * X['S_t'] ** 3 +
+#     betas[46] * X['S_t'] ** 2 * X['N_t'] +
+#     betas[47] * X['S_t'] ** 2 * X['E_t'] +
+#     betas[48] * X['S_t'] * X['N_t'] ** 2 +
+#     betas[49] * X['S_t'] * X['N_t'] * X['E_t'] +
+#     betas[50] * X['S_t'] * X['E_t'] ** 2 +
+#     betas[51] * X['N_t'] ** 3 +
+#     betas[52] * X['N_t'] ** 2 * X['E_t'] +
+#     betas[53] * X['N_t'] * X['E_t'] ** 2 +
+#     betas[54] * X['E_t'] ** 3 +
+#     betas[55]), -e)
+
+def get_functions(coef_dn, coef_de):
     return [f_n, f_ne, f_dn, f_de]
+    # f_dn, f_de = build_function_from_coeffs(coef_dn, coef_de)
+    # return [f_n, f_ne, f_dn, f_de]
 
-def get_function_values(functions, X, alphas, betas, de):
-    e_vals = np.arange(0, X['E_t'] + de, de)
-    n_vals = np.arange(1, int(X['N_t']) + 1)
+def get_function_values(functions, X, alphas, betas, de, show_landscape=False, training_points=None):
+    e_vals = np.arange(1, X['E_t'] + de, de, dtype=float)
+    n_vals = np.arange(1, int(X['N_t']) + 1, dtype=float)
 
-    # Create grids
+    # Create grid
     n_grid, e_grid = np.meshgrid(n_vals, e_vals, indexing='ij')  # shape: (N, len_e_vals)
 
     num_funcs = len(functions)
@@ -399,9 +508,84 @@ def get_function_values(functions, X, alphas, betas, de):
     for i, func in enumerate(functions):
         results[i] = func(n_grid, e_grid, X, alphas, betas)
 
+        # Plotting
+        if show_landscape:
+            tp = None
+            if training_points is not None:
+                tp = np.array(training_points)
+                n_min, n_max = tp[:, 0].min(), tp[:, 0].max()
+                e_min, e_max = tp[:, 1].min(), tp[:, 1].max()
+                # add 10% padding
+                n_pad = 0.1 * (n_max - n_min)
+                e_pad = 0.1 * (e_max - e_min)
+                n_min, n_max = n_min - n_pad, n_max + n_pad
+                e_min, e_max = e_min - e_pad, e_max + e_pad
+
+            # Make a grid of 2 rows: [global view, zoomed view]
+            fig, axes = plt.subplots(2, num_funcs,
+                                     subplot_kw={"projection": "3d"},
+                                     figsize=(6 * num_funcs, 10))
+
+            if num_funcs == 1:  # if only one function
+                axes = np.array([[axes[0]], [axes[1]]])
+
+            for i in range(num_funcs):
+                # --- Global plot ---
+                ax_global = axes[0, i]
+                surf = ax_global.plot_surface(
+                    n_grid, e_grid, results[i],
+                    cmap="viridis", edgecolor="none", alpha=0.9
+                )
+                ax_global.set_title(f"Function {i + 1} (Global)")
+                ax_global.set_xlabel("n")
+                ax_global.set_ylabel("e")
+                ax_global.set_zlabel("f(n,e)")
+                fig.colorbar(surf, ax=ax_global, shrink=0.5, aspect=10)
+
+                if tp is not None:
+                    # Evaluate training points at actual height
+                    z_tp = functions[i](tp[:, 0], tp[:, 1], X, alphas, betas)
+                    ax_global.scatter(tp[:, 0], tp[:, 1], z_tp,
+                                      c="red", marker="o", s=40,
+                                      label="Training points")
+                    ax_global.legend()
+
+                # --- Zoomed plot ---
+                ax_zoom = axes[1, i]
+
+                if tp is not None:
+                    # Mask grid to zoom region
+                    mask = ((n_grid >= n_min) & (n_grid <= n_max) &
+                            (e_grid >= e_min) & (e_grid <= e_max))
+                    n_zoom = np.where(mask, n_grid, np.nan)
+                    e_zoom = np.where(mask, e_grid, np.nan)
+                    z_zoom = np.where(mask, results[i], np.nan)
+
+                    surf_zoom = ax_zoom.plot_surface(
+                        n_zoom, e_zoom, z_zoom,
+                        cmap="viridis", edgecolor="none", alpha=0.9
+                    )
+                    ax_zoom.set_xlim(n_min, n_max)
+                    ax_zoom.set_ylim(e_min, e_max)
+                    ax_zoom.set_title(f"Function {i + 1} (Zoom)")
+                    ax_zoom.set_xlabel("n")
+                    ax_zoom.set_ylabel("e")
+                    ax_zoom.set_zlabel("f(n,e)")
+                    fig.colorbar(surf_zoom, ax=ax_zoom, shrink=0.5, aspect=10)
+
+                    # Training points at actual height
+                    z_tp = functions[i](tp[:, 0], tp[:, 1], X, alphas, betas)
+                    ax_zoom.scatter(tp[:, 0], tp[:, 1], z_tp,
+                                    c="red", marker="o", s=40,
+                                    label="Training points")
+                    ax_zoom.legend()
+
+            plt.tight_layout()
+            plt.show()
+
     return results, e_vals
 
-def do_polynomial_regression(df, show_plot=False):
+def do_polynomial_regression(df, show_plot=False, show_landscape=False):
     # Select the columns to apply polynomial features
     poly_cols = ['e', 'n', 'S_t', 'N_t', 'E_t']
 
@@ -432,9 +616,12 @@ def do_polynomial_regression(df, show_plot=False):
     X_scaled = scaler.fit_transform(X)
 
     output = []
-    for y in[dn_obs, de_obs]:
+    models = []
+    stats = {"training": {}, "grid": {}}
+    for y in [dn_obs, de_obs]:
         model = LinearRegression()
         model.fit(X_scaled, y)
+        models.append(model)
         y_pred = model.predict(X_scaled)
 
         # De-standardize coefficients
@@ -467,6 +654,78 @@ def do_polynomial_regression(df, show_plot=False):
             plt.title(f"Polynomial Regression: R2 = {r2:.2f}")
             plt.show()
 
+    if show_landscape:
+        # Build grid over n,e space
+        n_min, n_max = df_grouped['n'].min(), df_grouped['n'].max()
+        e_min, e_max = df_grouped['e'].min(), df_grouped['e'].max()
+        n_grid, e_grid = np.meshgrid(
+            np.linspace(n_min, n_max, 30),
+            np.linspace(e_min, e_max, 30)
+        )
+
+        # Use median values for other variables (S_t, N_t, E_t)
+        S_med = df_grouped['S_t'].median()
+        N_med = df_grouped['N_t'].median()
+        E_med = df_grouped['E_t'].median()
+
+        # Flatten and create feature matrix
+        grid_points = pd.DataFrame({
+            'e': e_grid.ravel(),
+            'n': n_grid.ravel(),
+            'S_t': S_med,
+            'N_t': N_med,
+            'E_t': E_med
+        })
+
+        # Apply polynomial transform
+        grid_poly = poly.transform(grid_points)
+        grid_poly_df = pd.DataFrame(grid_poly, columns=poly_feature_names)
+
+        # Scale
+        grid_scaled = scaler.transform(grid_poly_df)
+
+        # Predict dn and de landscapes (with lower bounds -n and -e)
+        dn_pred = models[0].predict(grid_scaled).reshape(n_grid.shape)
+        dn_pred = np.maximum(dn_pred, -df_grouped['n'].max())
+
+        de_pred = models[1].predict(grid_scaled).reshape(n_grid.shape)
+        de_pred = np.maximum(de_pred, -df_grouped['e'].max())
+
+        # Grid stats
+        for label, pred in zip(["dn", "de"], [dn_pred, de_pred]):
+            stats["grid"][label] = {
+                "mean_pred": float(np.mean(pred)),
+                "std_pred": float(np.std(pred)),
+                "min_pred": float(np.min(pred)),
+                "max_pred": float(np.max(pred))
+            }
+
+            stats["training"][label] = {
+                "mean_pred": np.mean(y_pred),
+                "std_pred": np.std(y_pred),
+                "min_pred": np.min(y_pred),
+                "max_pred": np.max(y_pred)
+            }
+
+        print(stats)
+
+        # Plot landscapes side by side
+        fig = plt.figure(figsize=(16, 7))
+
+        for i, (z_pred, label, obs) in enumerate(zip(
+                [dn_pred, de_pred],
+                ['dn', 'de'],
+                [dn_obs, de_obs]
+        )):
+            ax = fig.add_subplot(1, 2, i + 1, projection='3d')
+            ax.plot_surface(n_grid, e_grid, z_pred, cmap='viridis', alpha=0.7)
+            ax.scatter(df_grouped['n'], df_grouped['e'], obs, color='red')
+            ax.set_xlabel('n')
+            ax.set_ylabel('e')
+            ax.set_zlabel(label)
+            ax.set_title(f"Landscape for {label}")
+
+        plt.show()
 
     return output
 
@@ -494,6 +753,7 @@ def evaluate_model(lambdas, X, func_vals, empirical_rad, de, constraint_errors):
     for i in range(len(empirical_rad)):
         n_i = int(empirical_rad[i])
         p_i = max(sad[n_i - 1], 1e-8)
+        log_likelihood += np.log(p_i)
         log_likelihood += np.log(p_i)
     aic = 2 * k - 2 * log_likelihood
 
@@ -615,9 +875,45 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, use_log=False):
     else:
         plt.show()
 
+def plot_trajectories(df):
+    """
+    Plots trajectories for variables n, e, S_t, N_t, and E_t as functions of census.
+
+    - n: one line per species
+    - e: one line per individual (assuming each row corresponds to an individual, use species + index)
+    - S_t, N_t, E_t: one line in total
+    """
+
+    # Create a figure with 5 subplots sharing x-axis
+    fig, axes = plt.subplots(5, 1, figsize=(10, 18), sharex=True)
+
+    # 1. Plot n by species
+    sns.lineplot(ax=axes[0], data=df, x='census', y='n', hue='species', marker='o')
+    axes[0].set_title('n(t) per species')
+
+    # 2. Plot e by individual (using row index as individual identifier)
+    sns.lineplot(ax=axes[1], data=df, x='census', y='e', hue='TreeID', marker='o')
+    axes[1].set_title('e(t) per tree')
+
+    # 3. Plot S_t
+    axes[2].plot(df['census'].unique(), df.groupby('census')['S_t'].mean(), marker='o')
+    axes[2].set_title('S_t')
+
+    # 4. Plot N_t
+    axes[3].plot(df['census'].unique(), df.groupby('census')['N_t'].mean(), marker='o')
+    axes[3].set_title('N_t')
+
+    # 5. Plot E_t
+    axes[4].plot(df['census'].unique(), df.groupby('census')['E_t'].mean(), marker='o')
+    axes[4].set_title('E_t')
+    axes[4].set_xlabel('Census')
+
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for i in range(0, 9):
+    for i in [4]:
         # if i == 9:
         #     break
 
@@ -625,10 +921,18 @@ if __name__ == "__main__":
 
         # Load data
         input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
-        functions = get_functions()
+        plot_trajectories(input)
 
         # Compute polynomial coefficients
-        alphas, r2_dn, betas, r2_de = do_polynomial_regression(input)
+        #alphas, r2_dn, betas, r2_de = do_polynomial_regression(input, show_landscape=True)
+        alphas, r2_dn, betas, r2_de = sindy(input)
+        print()
+        print("Coefficients dn:")
+        print(alphas)
+        print("Coefficients de:")
+        print(betas)
+        print()
+        functions = get_functions(alphas, betas)
         r2s = pd.DataFrame({'r2_dn': [r2_dn], 'r2_de': [r2_de]})
         r2s.to_csv(f'empirical_BCI_r2_tf{ext}.csv', index=False)
         alphas = alphas['Coefficient'].values
@@ -657,7 +961,9 @@ if __name__ == "__main__":
 
             # Precompute functions(n, e)
             de = 1
-            func_vals, _ = get_function_values(functions, X, alphas, betas, de)
+            func_vals, _ = get_function_values(functions, X, alphas, betas, de,
+                                               show_landscape=True,
+                                               training_points=input[['n', 'e']].values)
 
             # Make initial guess
             initial_lambdas = make_initial_guess(X)

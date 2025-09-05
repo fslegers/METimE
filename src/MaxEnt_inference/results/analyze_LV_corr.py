@@ -67,20 +67,6 @@ if __name__ == '__main__':
     df['diff_AIC'] = df['AIC_mete'] - df['AIC_metime']
     df['diff_RMSE'] = df['rmse_mete'] - df['rmse_metime']
     df['ratio_RMSE'] = df['rmse_mete'] / df['rmse_metime']
-    df['ratio'] = df['dN'] / df['N/S']
-
-    #scatter_and_spearman(df, 'r^2_transition', 'ratio_RMSE', "R^2_transition", "RMSE METE / RMSE METimE",  color_split_y=True)
-    #scatter_and_spearman(df, 'r^2_transition', 'rmse_metime', "R^2_transition", "RMSE METimE")
-    #scatter_and_spearman(df, 'ratio', 'diff_RMSE', "dN / N/S", "RMSE METE - RMSE METIME", color_split_y=True)
-    #scatter_and_spearman(df, 'ratio', 'ratio_RMSE', "dN / N/S", "RMSE METE / RMSE METIME")
-    #scatter_and_spearman(df, 'ratio', 'rmse_metime', "dN / N/S", "RMSE METimE")
-    #scatter_and_spearman(df, 'ratio', 'rmse_mete', "dN / N/S", "RMSE METE")
-    #scatter_and_spearman(df, 'ratio', 'r^2_transition', "dN / N/S", "R^2 transition")
-
-    # For each unique model and variance combination, calculate the mean and 95 CI interval of R^2_transition
-    # And save as Pandas DataFrame
-    # with columns: inter-genus variance, model a, model b, ..., model f
-    # with entries: mean R^2 \n [5%, 95%]
 
     # Group by 'var' and 'model'
     grouped = df.groupby(['var', 'model'])['r^2_transition']

@@ -69,7 +69,9 @@ def do_polynomial_regression(df, target='dn', level='individuals', cluster='glob
             feature_cols = feature_cols.drop(columns=[col])
 
     if level != 'individuals' and cluster == 'global':
-        # order columns e, n, S, N, E
+        desired_order = ["e", "n", "S", "N", "E"]
+        cols_in_df = [c for c in desired_order if c in df.columns]
+        df = df[cols_in_df + [c for c in df.columns if c not in cols_in_df]]
 
     # Step 4: Compute polynomial features
     poly = PolynomialFeatures(degree=3, include_bias=False)

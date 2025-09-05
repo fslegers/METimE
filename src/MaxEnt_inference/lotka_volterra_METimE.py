@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.optimize import root_scalar, minimize
 import matplotlib.pyplot as plt
 from scipy.stats import rv_discrete
-from sklearn.metrics import r2_score, mean_absolute_error
+from sklearn.metrics import r2_score, mean_absolute_error, root_mean_squared_error
 from matplotlib.lines import Line2D
 import warnings
 import os
@@ -72,13 +72,11 @@ def entropy(lambdas, functions, X, coeffs):
 
     return neg_H
 
-
 def beta_function(beta, S, N):
     """
     Beta function used to generate the initial guess for Lagrange multipliers.
     """
     return (1 - np.exp(-beta)) / (np.exp(-beta) - np.exp(-beta * (N + 1))) * np.log(1.0 / beta) - S / N
-
 
 def make_initial_guess(X, method):
     """
@@ -127,8 +125,6 @@ def constraint(f_k, lambdas, functions, F_k, X, coeffs):
     lhs = np.sum(p * f_k(n, X, coeffs))
 
     return (lhs - F_k)
-    #return (lhs - F_k) / np.abs(F_k)
-
 
 def perform_optimization(lambdas, functions, macro_var, X, coeffs):
     # TODO: check if the order of functions and constraints is always the same!
@@ -182,7 +178,6 @@ def perform_optimization(lambdas, functions, macro_var, X, coeffs):
 
     return optimized_lambdas
 
-
 def check_constraints(lambdas, functions, X, macro_var, coeffs):
     """
     Calculates the expected value of a single constraint function f_k over the ecosystem structure function:
@@ -203,7 +198,6 @@ def check_constraints(lambdas, functions, X, macro_var, coeffs):
     print("-" * 42)
     for key, abs_err, pct_err in zip(macro_var.keys(), absolute_errors, percentage_errors):
         print(f"{key:<10} {abs_err:15.6f} {pct_err:15.2f}")
-
 
 def f_1(n, X, coeffs):
     return n
@@ -251,7 +245,6 @@ def compute_SAD_probabilities(lambdas, functions, X, coeffs):
 
     return unnorm_p / Z
 
-
 def compute_entropy(p):
     entropy = 0
 
@@ -260,7 +253,6 @@ def compute_entropy(p):
             entropy += p_n * np.log(p_n)
 
     return -entropy
-
 
 def get_rank_abundance(p_n, X):
     """
@@ -292,7 +284,6 @@ def get_rank_abundance(p_n, X):
         raise ValueError(f"Expected {S} predicted abundances, got {len(pred_abundances)}.")
 
     return np.sort(pred_abundances)[::-1]  # descending order
-
 
 def compare_SADs(lambdas, functions, X, coeffs, empirical_rad, method, model, census, plot=True):
     """
@@ -328,6 +319,7 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rad, method, model, ce
 
     # MAE
     mae = mean_absolute_error(empirical_rad, predicted_rad)
+    rmse = root_mean_squared_error(empirical_rad, predicted_rad)
 
     # AIC
     if method == "METE":
@@ -377,8 +369,7 @@ def compare_SADs(lambdas, functions, X, coeffs, empirical_rad, method, model, ce
         plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/{method}/{model}_{census}.png')
         plt.close()
 
-    return predicted_rad, mae, aic, entropy
-
+    return predicted_rad, mae, rmse, aic, entropy
 
 def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var):
     ranks = np.arange(1, len(empirical) + 1)
@@ -418,7 +409,6 @@ def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var)
     plt.savefig(save_path, dpi=300)
     plt.close()
     #plt.show()
-
 
 # def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var):
 #     ranks = np.arange(1, len(empirical) + 1)
@@ -479,19 +469,19 @@ def plot_combined_SAD(empirical, mete, metime, model, var, census_id, macro_var)
 def generate_aic_mae_entropy_table(df):
     #TODO: also include fraction of times that METimE outperformed METE
     metrics = [
-        'AIC_mete', 'MAE_mete', 'entropy_mete',
-        'AIC_metime', 'MAE_metime', 'entropy_metime'
+        'N/S', 'dN/S', 'r2', 'AIC_mete', 'MAE_mete', 'RMSE_mete',
+        'AIC_metime', 'MAE_metime', 'RMSE_metime'
     ]
 
     summary = df.groupby(['model', 'var'])[metrics].mean().reset_index()
     summary = summary.sort_values(['model', 'var'])
-    summary = summary.round(3)  # More precision for entropy if needed
+    summary = summary.round(3)
 
     # Optional: Rename columns for prettier LaTeX output
     summary.columns = [
-        'Model', 'Variance',
-        'METE AIC', 'METE MAE', 'METE Entropy',
-        'METimE AIC', 'METimE MAE', 'METimE Entropy'
+        'Model', 'Variance', 'N/S', 'dN/S', 'R^2',
+        'METE AIC', 'METE MAE', 'METE RMSE',
+        'METimE AIC', 'METimE MAE', 'METimE RMSE'
     ]
 
     # Format numeric columns to 3 decimal places
@@ -558,14 +548,14 @@ if __name__ == "__main__":
                     functions_mete = [f_1]
                     initial_lambdas_mete = make_initial_guess(X, 'METE')
                     lambdas_mete = perform_optimization(initial_lambdas_mete, functions_mete, macro_mete, X, [])
-                    predicted_mete, mae_mete, aic_mete, entropy_mete = compare_SADs(lambdas_mete, functions_mete, X, [], empirical_RAP, 'METE',
+                    predicted_mete, mae_mete, rmse_mete, aic_mete, entropy_mete = compare_SADs(lambdas_mete, functions_mete, X, [], empirical_RAP, 'METE',
                                                                model, census, plot=False)
 
                     # METimE
                     functions_metime = [f_1, dn]
                     initial_lambdas_metime = make_initial_guess(X, 'METimE')
                     lambdas_metime = perform_optimization(initial_lambdas_metime, functions_metime, macro_metime, X, coeffs)
-                    predicted_metime, mae_metime, aic_metime, entropy_metime = compare_SADs(lambdas_metime, functions_metime, X, coeffs,
+                    predicted_metime, mae_metime, rmse_metime, aic_metime, entropy_metime = compare_SADs(lambdas_metime, functions_metime, X, coeffs,
                                                                    empirical_RAP, 'METimE', model, census, plot=False)
 
                     # Plot
@@ -578,15 +568,18 @@ if __name__ == "__main__":
                     results.append({
                         'model': model,
                         'var': var,
+                        'iter': iter,
                         'AIC_mete': aic_mete,
                         'MAE_mete': mae_mete,
+                        'RMSE_mete': rmse_mete,
                         'entropy_mete': entropy_mete,
                         'AIC_metime': aic_metime,
                         'MAE_metime': mae_metime,
+                        'RMSE_metime': rmse_metime,
                         'entropy_metime': entropy_metime,
                         'N/S': macro_mete['N/S'],
                         'dN/S': macro_metime['dN/S'],
-                        'r^2_transition': r2_transition
+                        'r2': r2_transition
                     })
 
     results_df = pd.DataFrame(results)

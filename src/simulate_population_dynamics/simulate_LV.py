@@ -97,17 +97,23 @@ def create_df(solutions):
     df["N_t"] = np.repeat(total_N, S)
     df["S_t"] = np.repeat(richness_S, S)
 
-    # Compute dn per species (difference in n from previous step)
-    dn_matrix = np.diff(subsamples, axis=0, prepend=np.zeros((1, S)))
+    dn_matrix = np.diff(subsamples, axis=0, append=np.zeros((1, S)))
+
+    # Replace with -n_t if species goes extinct at t+1
+    extinct_mask = subsamples[1:] == 0  # shape (T-1, S)
+    dn_matrix[:-1][extinct_mask] = -subsamples[:-1][extinct_mask]
+
+    # Flatten into dataframe
     df["dn"] = dn_matrix.flatten()
 
-    # Compute dN and dS per time step
-    dN = np.diff(total_N, prepend=0)
-    dS = np.diff(richness_S, prepend=0)
+    # Compute forward differences for N and S: value(t+1) - value(t)
+    dN = np.diff(total_N, append=0)
+    dS = np.diff(richness_S, append=0)
+
     df["dN"] = np.repeat(dN, S)
     df["dS"] = np.repeat(dS, S)
 
-    df = df[df['census'] > 1]
+    df = df[df['census'] < 20]
 
     return df
 
@@ -412,6 +418,7 @@ def set_up_regression(df, var, N_clusters=None, LV_model='constant', regression_
 
     # Recompute dn, dN, dS
     df_deltas = compute_deltas(df_filtered, 'LV').reset_index(drop=True)
+    df_deltas = compute_deltas(df_filtered, 'LV').reset_index(drop=True)
 
     if regression_type=="clustered":
         df_deltas = df_deltas.merge(N_clusters, on='census', how='left')
@@ -555,48 +562,3 @@ def get_metrics(model, var, T=20, repetitions=100):
     avg_r2 = pd.DataFrame({f"{model},{var}": [np.nanmean(results_r2[k]) for k in index]}, index=index)
 
     return avg_r2
-
-
-# if __name__ == "__main__":
-#     np.random.seed(42)
-#
-#     all_r2 = []
-#     all_adj_r2 = []
-#
-#     for model in ['a','b','c','d','e','f']:
-#         for var in [0.0, 0.05, 0.1]:
-#         #for var in [0.0]:
-#             df = three_groups_LV(model, T=20, var=var)
-#
-#             # do global regression
-#             obs, pred,_ = set_up_regression(df, var, LV_model=model, regression_type="global")
-#             plot_observed_vs_predicted(obs, pred, title=f"{model}_{var}_global", save=True)
-#
-#             # do regression per species
-#             obs, pred, species_list = [], [], []
-#             for species in df['species'].unique():
-#                 y, y_pred,_ = set_up_regression(df[df['species'] == species], var, LV_model=model, regression_type="species-specific")
-#                 obs += y.tolist()
-#                 pred += y_pred.tolist()
-#             plot_observed_vs_predicted(obs, pred, title=f"{model}_{var}_species_specific", save=True)
-#
-# #             # do regression per cluster
-# #             df['cluster'] = df['species'].apply(lambda x: 'x' if x < 10 else 'y' if x < 20 else 'z')
-# #             X_clustered = get_cluster_state_variables(df)
-# #             obs, pred, cluster_list = [], [], []
-# #             for cluster in df['cluster'].unique():
-# #                 df_cluster = df[df['cluster'] == cluster]
-# #                 y, y_pred = set_up_regression(df_cluster.copy().drop(columns=['cluster']), var, X_clustered, LV_model=model, regression_type="clustered", cluster={cluster})
-# #                 obs += y.tolist()
-# #                 pred += y_pred.tolist()
-# #                 cluster_list += list(cluster * len(y))
-# #             plot_observed_vs_predicted(obs, pred, species=cluster_list, title=f"{model}_{var}_clustered")
-#
-# #             # Create table with R^2
-# #             avg_r2 = get_metrics(model, var)
-# #             all_r2.append(round(avg_r2, 3))
-# #
-# # final_r2_df = pd.concat(all_r2, axis=1).transpose()
-# # final_r2_df = final_r2_df.reset_index().rename(columns={'index': 'model'})
-# # final_r2_df.to_csv('C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/r2.csv', index=False)
-

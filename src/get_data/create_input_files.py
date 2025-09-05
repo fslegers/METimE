@@ -66,7 +66,6 @@ def load_BCI():
     df.to_csv('../../data/BCI_regression_library.csv', index=False)
 
 
-
 def load_BCI_quadrat(index):
     path = 'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/FullMeasurementBCI.tsv'
     df = pd.read_csv(path, sep='\t', low_memory=False)
@@ -109,6 +108,14 @@ def load_BCI_quadrat(index):
     df_next.rename(columns={'E_t': 'next_E'}, inplace=True)
     df_next = df_next[['species', 'census', 'TreeID', 'next_n', 'next_e', 'next_S', 'next_N', 'next_E']]
     df = df.merge(df_next, how='left', on=['species', 'census', 'TreeID'])
+
+    # Change NaNs in df['next_n'] and df['next_e'] to 0'
+    df['next_n'] = df['next_n'].fillna(0).astype(int)
+    df['next_e'] = df['next_e'].fillna(0).astype(int)
+
+    # Fill in S, N, and E by any other entrie from the same census
+    df[['next_S', 'next_N', 'next_E']] = df.groupby(['species', 'census'])[['next_S', 'next_N', 'next_E']].transform(
+        lambda x: x.fillna(method='ffill').fillna(method='bfill'))
 
     df['dn'] = df['next_n'] - df['n']
     df['de'] = df['next_e'] - df['e']
@@ -165,10 +172,72 @@ def add_missing_rows(df):
     return df
 
 
+def BCI_10_quadrats():
+    path = 'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Data sets/BCI/FullMeasurementBCI.tsv'
+    df = pd.read_csv(path, sep='\t', low_memory=False)
+
+    df = df[df['Status'] == "alive"]
+
+    quadrat_names = df['QuadratName'].unique()[:10]
+    df = df[df['QuadratName'].isin(quadrat_names)]
+
+    df = df.drop(
+        ["Mnemonic", "Subspecies", "SubspeciesID", "StemTag", "HOM", "HighHOM", "ListOfTSM", "Date", "ExactDate",
+         "Status", "QuadratName", "QuadratID", 'PX', 'PY'], axis=1)
+    df = df.dropna()
+
+    # Take average of 'DBH' for duplicates
+    df = df.groupby([col for col in df.columns if col not in ['DBH', 'StemID']], as_index=False).agg({'DBH': 'mean'})
+
+    # Calculate Metabolic Rate as in "A strong test for Maximum Entropy Theory of Ecology, Xiao, 2015"
+    min_DBH = min(df['DBH'])
+    df['Metabolic_Rate'] = (df['DBH'] / min_DBH) ** 2
+
+    # Select columns
+    df = df.copy()[['SpeciesID', 'TreeID', 'PlotCensusNumber', 'Metabolic_Rate']]
+
+    df.rename(columns={'SpeciesID': 'species', 'PlotCensusNumber': 'census', 'Metabolic_Rate': 'e'}, inplace=True)
+
+    # Add State Variables to df
+    df['S_t'] = df.groupby(['census'])['species'].transform('nunique')
+    df['S_t'] = np.ceil(df['S_t'])
+    df['n'] = df.groupby(['species', 'census'])['TreeID'].transform('nunique')
+    df['N_t'] = df.groupby(['census'])['TreeID'].transform('nunique')
+    df['N_t'] = np.ceil(df['N_t'])
+    df['E_t'] = df.groupby(['census'])['e'].transform('sum')
+
+    #df = add_missing_rows(df)
+
+    # # Add population sizes to df
+    # df['n_t'] = df.groupby(['PlotCensusNumber', 'SpeciesID'])['TreeID'].transform('nunique')
+
+    # Add the values of n at the next year
+    df_next = df.copy()
+    df_next['census'] = df_next['census'] - 1
+    df_next.rename(columns={'n': 'next_n'}, inplace=True)
+    df_next.rename(columns={'e': 'next_e'}, inplace=True)
+    df_next.rename(columns={'S_t': 'next_S'}, inplace=True)
+    df_next.rename(columns={'N_t': 'next_N'}, inplace=True)
+    df_next.rename(columns={'E_t': 'next_E'}, inplace=True)
+    df_next = df_next[['species', 'census', 'TreeID', 'next_n', 'next_e', 'next_S', 'next_N', 'next_E']]
+    df = df.merge(df_next, how='left', on=['species', 'census', 'TreeID'])
+
+    df['dn'] = df['next_n'] - df['n']
+    df['de'] = df['next_e'] - df['e']
+    df['dS'] = df['next_S'] - df['S_t']
+    df['dN/S'] = (df['next_N'] - df['N_t'])/df['S_t']
+    df['dE/S'] = (df['next_E'] - df['E_t'])/df['S_t']
+
+    df = df.drop(columns=['next_n', 'next_S', 'next_e', 'next_N', 'next_E'], axis=1)
+
+    df = df.dropna(how='any')
+    df.to_csv('../../data/BCI_regression_library.csv', index=False)
+
+
 
 if __name__ == '__main__':
-    #load_BCI()
-    for i in range(10, 12):
+    load_BCI()
+    for i in range(8):
         load_BCI_quadrat(i) # index can be 0, 1, ..., 1251
 
         # There seems to be a problem with quadrat 9, so we exclude it
