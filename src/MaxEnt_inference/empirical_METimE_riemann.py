@@ -242,7 +242,7 @@ def run_optimization(lambdas, macro_var, X, func_vals, maxiter=1000, optimizer='
                           method="trust-constr",
                           options={'maxiter': maxiter,
                                    'initial_tr_radius': 0.1,
-                                   'gtol': 1e-12,
+                                   #'gtol': 1e-12,
                                    'disp': True,
                                    'verbose': 1
                                    })

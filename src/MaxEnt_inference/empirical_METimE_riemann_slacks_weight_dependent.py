@@ -1,3 +1,4 @@
+import csv
 import os
 import seaborn as sns
 import numpy as np
@@ -301,7 +302,7 @@ def run_optimization(vars, macro_var, func_vals, slack_weight=1, maxiter=1e08):
                       method="trust-constr",
                       options={'maxiter':maxiter,
                                'initial_tr_radius': 0.05,
-                               'gtol': 1e-12,
+                               #'gtol': 1e-12,
                                'disp': True,
                                'verbose': 1})
 
@@ -512,9 +513,24 @@ def plot_trajectories(df):
     plt.tight_layout()
     plt.show()
 
+def add_row(data):
+    filename = "C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/results_per_slack_weight.csv"
+    file_exists = os.path.isfile(filename)
+    columns = ["census", "quad", "slack_weight", "AIC", "RMSE", "MAE", "entropy"]
+
+    with open(filename, mode="a", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+
+        # Write the header only if the file is new
+        if not file_exists:
+            writer.writeheader()
+
+        # Write the data row
+        writer.writerow(data)
+
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for i in [0, 1, 2, 3, 4]:
+    for i in [0, 1, 2]:
         ext = f'_quadrat_{i}'
 
         # Load data
@@ -552,7 +568,7 @@ if __name__ == "__main__":
 
             # Precompute functions(n, e)
             #max_n = int(min(X['N_t'], 1.5 * max(input_census['n'])))
-            max_n = int(X['N_t'])
+            max_n = int(X['N_t']-X['S_t'])
             min_e = max(1, -1.5 * input_census['e'].quantile(0.15))
             max_e = min(X['E_t'], 1.5 * input_census['e'].quantile(0.85))
 
@@ -574,7 +590,7 @@ if __name__ == "__main__":
                 X,
                 func_vals[:2],
                 optimizer='trust-constr',
-                maxiter=1e10
+                maxiter=1e8
             )
             METE_lambdas = np.append(METE_lambdas, [0, 0])
             mete_constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
@@ -584,48 +600,61 @@ if __name__ == "__main__":
             #######################################
             #####           METimE            #####
             #######################################
+            prev_best_MAE = np.inf
+            for w_exp in np.arange(-2, 2, 1, dtype=float):
+                for w_base in np.arange(1, 10):
+                    w = w_base * 10 ** w_exp
+                    print(" ")
+                    print("----------METimE----------")
+                    METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=1e8)
+                    print("Optimized lambdas: {}".format(METimE_lambdas[:4]))
+                    #print("Slack variables: {}".format(METimE_lambdas[4:]))
+                    metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
+                    METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
+                    print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
 
-            for w_exp in np.arange(-4, 4, 1, dtype=float):
-                w = 10 ** w_exp
-                print(" ")
-                print("----------METimE----------")
-                METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=1e3)
-                print("Optimized lambdas: {}".format(METimE_lambdas[:4]))
-                #print("Slack variables: {}".format(METimE_lambdas[4:]))
-                metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
-                METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
-                print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
+                    ##########################################
+                    #####           Save results         #####
+                    ##########################################
+                    results_list.append({
+                        'quad': ext,
+                        'census': census,
+                        'slack_weight': w,
+                        'N/S': macro_var['N/S'],
+                        'E/S': macro_var['E/S'],
+                        'dN/S': macro_var['dN/S'],
+                        'dE/S': macro_var['dE/S'],
+                        'r2_dn': r2_dn,
+                        'r2_de': r2_de,
+                        'METE_error_N/S': mete_constraint_errors[0],
+                        'METE_error_E/S': mete_constraint_errors[1],
+                        'METE_error_dN/S': mete_constraint_errors[2],
+                        'METE_error_dE/S': mete_constraint_errors[3],
+                        'METimE_error_N/S': metime_constraint_errors[0],
+                        'METimE_error_E/S': metime_constraint_errors[1],
+                        'METimE_error_dN/S': metime_constraint_errors[2],
+                        'METimE_error_dE/S': metime_constraint_errors[3],
+                        'METE_AIC': METE_results['AIC'].values[0],
+                        'METE_MAE': METE_results['MAE'].values[0],
+                        'METE_RMSE': METE_results['RMSE'].values[0],
+                        'METimE_AIC': METimE_results['AIC'].values[0],
+                        'METimE_MAE': METimE_results['MAE'].values[0],
+                        'METimE_RMSE': METimE_results['RMSE'].values[0]
+                    })
 
-                ##########################################
-                #####           Save results         #####
-                ##########################################
-                results_list.append({
-                    'quad': ext,
-                    'census': census,
-                    'slack_weight': w,
-                    'N/S': macro_var['N/S'],
-                    'E/S': macro_var['E/S'],
-                    'dN/S': macro_var['dN/S'],
-                    'dE/S': macro_var['dE/S'],
-                    'r2_dn': r2_dn,
-                    'r2_de': r2_de,
-                    'METE_error_N/S': mete_constraint_errors[0],
-                    'METE_error_E/S': mete_constraint_errors[1],
-                    'METE_error_dN/S': mete_constraint_errors[2],
-                    'METE_error_dE/S': mete_constraint_errors[3],
-                    'METimE_error_N/S': metime_constraint_errors[0],
-                    'METimE_error_E/S': metime_constraint_errors[1],
-                    'METimE_error_dN/S': metime_constraint_errors[2],
-                    'METimE_error_dE/S': metime_constraint_errors[3],
-                    'METE_AIC': METE_results['AIC'].values[0],
-                    'METE_MAE': METE_results['MAE'].values[0],
-                    'METE_RMSE': METE_results['RMSE'].values[0],
-                    'METimE_AIC': METimE_results['AIC'].values[0],
-                    'METimE_MAE': METimE_results['MAE'].values[0],
-                    'METimE_RMSE': METimE_results['RMSE'].values[0]
-                })
+                    add_row({
+                        "census": census,
+                        "quad": ext,
+                        "slack_weight": w,
+                        "AIC": METimE_results['AIC'].values[0],
+                        "RMSE": METimE_results['RMSE'].values[0],
+                        "MAE": METimE_results['MAE'].values[0],
+                        "entropy": -entropy(METimE_lambdas[:4], func_vals)
+                    })
 
-                plot_RADs(empirical_rad, METE_rad, METimE_rad, f'quad_{ext}_census_{census}_w_{w}', use_log=True)
+                    if METimE_results['MAE'].values[0] < prev_best_MAE:
+                        plot_RADs(empirical_rad, METE_rad, METimE_rad, f'quad_{ext}_census_{census}', 'Empirical', weight={w}, use_log=True)
+                        prev_best_MAE = METimE_results['MAE'].values[0]
 
         results_df = pd.DataFrame(results_list)
         results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/empirical_BCI_df/empirical_BCI_df{ext}.csv', index=False)
