@@ -249,7 +249,7 @@ def get_function_values(functions, X, alphas, betas, scaler, maxima, show_landsc
     # Create n,e grid
     n_max, e_min, e_max = maxima
     n_vals = np.arange(1, n_max + 1, dtype=float)
-    e_vals = np.linspace(e_min, e_max, num=100, dtype=float)
+    e_vals = np.linspace(e_min, e_max, num=50, dtype=float)
     n_grid, e_grid = np.meshgrid(n_vals, e_vals, indexing='ij')
 
     # Fill grid

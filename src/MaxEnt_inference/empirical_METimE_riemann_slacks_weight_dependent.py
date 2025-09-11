@@ -530,7 +530,7 @@ def add_row(data):
 
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for i in [0, 1, 2]:
+    for i in [1]:
         ext = f'_quadrat_{i}'
 
         # Load data
@@ -590,7 +590,7 @@ if __name__ == "__main__":
                 X,
                 func_vals[:2],
                 optimizer='trust-constr',
-                maxiter=1e8
+                maxiter=5e5
             )
             METE_lambdas = np.append(METE_lambdas, [0, 0])
             mete_constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
@@ -602,16 +602,16 @@ if __name__ == "__main__":
             #######################################
             prev_best_MAE = np.inf
             for w_exp in np.arange(-2, 2, 1, dtype=float):
-                for w_base in np.arange(1, 10):
+                for w_base in np.arange(1, 10, 2):
                     w = w_base * 10 ** w_exp
                     print(" ")
                     print("----------METimE----------")
-                    METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=1e8)
+                    METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=5e5)
                     print("Optimized lambdas: {}".format(METimE_lambdas[:4]))
                     #print("Slack variables: {}".format(METimE_lambdas[4:]))
                     metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
                     METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
-                    print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
+                    print(f"AIC: {METimE_results['AIC'].values[0]}, RMSE: {METimE_results['RMSE'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
 
                     ##########################################
                     #####           Save results         #####
