@@ -196,8 +196,11 @@ def run_optimization(lambdas, macro_var, X, func_vals, maxiter=1000, optimizer='
         # Define scale factors so that parameters are roughly of the same order of magnitude
         values = np.asarray([lambdas[0], lambdas[1], bounds_dn[1], bounds_de[1]], dtype=float)
 
-    else:
+    elif len(lambdas) == 2:
         values = np.asarray([lambdas[0], lambdas[1]], dtype=float)
+
+    else:
+        values = np.asarray([lambdas[0]], dtype=float)
 
     scales = np.where(values != 0,
                     10.0 ** np.floor(np.log10(np.abs(values))),
@@ -210,10 +213,13 @@ def run_optimization(lambdas, macro_var, X, func_vals, maxiter=1000, optimizer='
                   bounds_dn / scales[2],
                   bounds_de / scales[3]]
         weights = [1, 1, 0.01, 0.01]
-    else:
+    elif len(lambdas) == 2:
         bounds = [(0, 18) / scales[0],
                   (0, 18) / scales[1]]
         weights = [1, 1]
+    else:
+        bounds = [(0, 18) / scales[0]]
+        weights = [1]
 
     # TODO: is the upper bound of 18 okay?
 
@@ -242,7 +248,8 @@ def run_optimization(lambdas, macro_var, X, func_vals, maxiter=1000, optimizer='
                           method="trust-constr",
                           options={'maxiter': maxiter,
                                    'initial_tr_radius': 0.1,
-                                   #'gtol': 1e-12,
+                                   'xtol': 1e-10,
+                                   'gtol': 1e-12,
                                    'disp': True,
                                    'verbose': 1
                                    })

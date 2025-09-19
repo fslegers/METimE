@@ -449,16 +449,13 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30.0, obs_interval=0.25, start_fr
         alphas, r2_dn, betas, r2_de, scaler = sindy(df)
         r2s = pd.DataFrame({'r2_dn': [r2_dn], 'r2_de': [r2_de]})
         print(r2s)
+
         alphas = alphas['Coefficient'].values
         betas = betas['Coefficient'].values
         functions = get_functions()
 
-        # Create list to store results
-        results_list = []
-
         # For 3 cencuses, perform MaxEnt inference
-        for census in np.linspace(0, len(np.unique(df['census'])) - 1, 3, dtype=int):
-            prev_best_MAE = np.inf
+        for census in [1]:
             input_census = df[df['census'] == census]
 
             X = input_census[[
@@ -515,8 +512,8 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30.0, obs_interval=0.25, start_fr
                 f"AIC: {METE_results['AIC'].values[0]}, RMSE: {METE_results['RMSE'].values[0]}, MAE: {METE_results['MAE'].values[0]}")
 
             prev_best_MAE = np.inf
-            for w_exp in np.arange(-6, 2, 1, dtype=float):
-                for w_base in np.arange(1, 10, 2):
+            for w_exp in np.arange(-1, 2, 1, dtype=float):
+                for w_base in [1, 3, 5, 7, 9]:
                     w = w_base * 10 ** w_exp
                     print("Slack weight = {w}".format(w=w))
 
@@ -526,14 +523,19 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30.0, obs_interval=0.25, start_fr
                     print(" ")
                     print("----------METimE----------")
                     METimE_lambdas = METimE(
-                        METE_lambdas,
-                        macro_var,
-                        func_vals,
+                        METE_lambdas[:3],
+                        {
+                            'N/S': float(X['N_t'] / X['S_t']),
+                            'E/S': float(X['E_t'] / X['S_t']),
+                            'dN/S': input_census['dN/S'].unique()[0],
+                        },
+                        func_vals[:3],
                         w,
-                        maxiter=1e6
+                        maxiter=1e5
                     )
-                    print("Optimized lambdas: {}".format(METimE_lambdas[:4]))
-                    #print("Slack variables: {}".format(METimE_lambdas[4:]))
+                    print("Optimized lambdas: {}".format(METimE_lambdas[:3]))
+
+                    METimE_lambdas = np.append(METimE_lambdas[:3], [0])
                     metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
                     METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
                     print(f"AIC: {METimE_results['AIC'].values[0]}, RMSE: {METimE_results['RMSE'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
@@ -543,6 +545,7 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30.0, obs_interval=0.25, start_fr
                     ##########################################
                     results_list.append({
                         'iter': iter,
+                        'frac': frac,
                         'census': census,
                         'slack_weight': w,
                         'r2_dn': r2_dn,
@@ -563,23 +566,23 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30.0, obs_interval=0.25, start_fr
                         'METimE_RMSE': METimE_results['RMSE'].values[0]
                     })
 
-                    add_row({
-                        "frac": frac,
-                        "census": census,
-                        "slack_weight": w,
-                        "AIC": METimE_results['AIC'].values[0],
-                        "RMSE": METimE_results['RMSE'].values[0],
-                        "MAE": METimE_results['MAE'].values[0],
-                        "entropy": -entropy(METimE_lambdas[:4], func_vals)
-                    })
+                    # add_row({
+                    #     "frac": frac,
+                    #     "census": census,
+                    #     "slack_weight": w,
+                    #     "AIC": METimE_results['AIC'].values[0],
+                    #     "RMSE": METimE_results['RMSE'].values[0],
+                    #     "MAE": METimE_results['MAE'].values[0],
+                    #     "entropy": -entropy(METimE_lambdas[:4], func_vals)
+                    # })
 
                     if METimE_results['MAE'].values[0] < prev_best_MAE:
-                        ext = f"simulated_census={census}_weight_dependent_frac={frac}.png"
+                        ext = f"new_simulated_census={census}_weight_dependent_iter={iter}_frac={frac}.png"
                         plot_RADs(empirical_rad, METE_rad, METimE_rad, ext, obs_label="Simulated", weight=w, use_log=True)
                         prev_best_MAE = METimE_results['MAE'].values[0]
 
     results_df = pd.DataFrame(results_list)
-    results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_BCI_weight_dependent_{frac}.csv', index=False)
+    results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/new_simulated_BCI_weight_dependent_{frac}.csv', index=False)
 
 
 def load_simple_dynaMETE():
@@ -656,8 +659,9 @@ if __name__ == '__main__':
     # thereby disturbing the equilibrium
     # for each "level of disturbance" (fraction of initial population removed) repeat 5 times
 
-    for frac in [0.2, 0.0, 0.4, 0.6, 0.8]:
-        run_simulation(X, param, frac, n_iter=1, t_max=0.1, obs_interval=0.01, start_from_prev=True)
+    for frac in [0.0, 0.2, 0.4, 0.6, 0.8]:
+        print(f"-----------Running simulation for frac={frac}----------------")
+        run_simulation(X, param, frac, n_iter=20, t_max=0.05, obs_interval=0.01, start_from_prev=True)
 
 
 

@@ -4,13 +4,14 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import root_scalar, minimize
 from src.MaxEnt_inference.empirical_METimE_quadrat import get_rank_abundance
-from src.MaxEnt_inference.empirical_METimE_quadrat import get_empirical_RAD
 from sklearn.metrics import mean_absolute_error, root_mean_squared_error
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
-from src.parametrize_transition_functions.SINDy_like_regression import do_polynomial_regression as sindy
+from src.parametrize_transition_functions.SINDy_like_regression_for_LV import do_polynomial_regression as sindy
 from src.MaxEnt_inference.empirical_METimE_riemann import run_optimization as METE
-from src.parametrize_transition_functions.SINDy_like_regression import get_functions, get_function_values
+from src.parametrize_transition_functions.SINDy_like_regression_for_LV import get_functions, get_function_values
+from src.simulate_population_dynamics.simulate_LV import three_groups_LV
+
 
 import warnings
 
@@ -70,12 +71,35 @@ def entropy(vars, func_vals, scales=[1,1,1,1,1,1]):
 
     return H
 
+def get_relative_errors(vars, func_vals, func_index, target_value, scales):
+    """
+    Vectorized single constraint calculation
+    Weight determines the relative weight of the constraint
+    """
+    # Scale back lambdas
+    vars = vars * scales
+    lambdas = vars[:2]
+
+    # Partition function Z
+    Z = partition_function(lambdas, func_vals)
+
+    # Ecosystem structure function R
+    R = ecosystem_structure_function(lambdas, func_vals, Z)
+
+    # Expected value of f_k under R
+    expected_value = np.sum(R * func_vals[func_index])
+
+    # Safety check
+    if np.isnan(expected_value) or np.isinf(expected_value):
+        print("Invalid values detected in single constraint")
+        expected_value = 1e10
+
+    # Return deviation from target
+    return ((expected_value - target_value) / target_value)
+
 def penalized_entropy(vars, func_vals, macro_var, scales, slack_weight = 1.0):
     return (entropy(vars, func_vals, scales) + slack_weight * (
-            vars[4] ** 2 +
-            vars[5] ** 2))
-    # vars[4] and vars[5] are relative slacks, i.e., the fraction of dN/S that is added as slack
-    # slack_weight is a hyperparameter that determines the relative weight of the slacks
+            (get_relative_errors(vars, func_vals, 2, macro_var['dN/S'], scales)) ** 2))
 
 def penalized_entropy_grad(vars, func_vals, macro_var, scales, slack_weight = 1.0):
     # Scale back lambdas
@@ -119,26 +143,16 @@ def make_initial_guess(X):
     A function that makes an initial guess for the Lagrange multipliers lambda1 and lambda2.
     Based on Eq 7.29 from Harte 2011 and meteR'diag function meteESF.mete.lambda
 
-    :param state_variables: state variables S, S and E
+    :param state_variables: state variables S, N and E
     :return: initial guess for the Lagrange multipliers lambda1 and lambda2
     """
-    S, N, E = int(X['S_t']), int(X['N_t']), float(X['E_t'])
-    interval = [1.0 / N, S / N]
+    S, N = int(X['S_t']), int(X['N_t'])
 
-    try:
-        beta = root_scalar(beta_function, x0=0.001, args=(S, N), method='brentq', bracket=interval)
-        l2 = S / (E - N)
-        l1 = beta.root - l2
+    nom = N * (- np.sqrt( S * (4 * N + S) / N ** 2) + 2 * N + S)
+    denom = 2 * N
+    l1 = np.log(nom/denom)
 
-        if l1 < 0 or l2 < 0:  # Assumption based on "Derivations of the Core Functions of METE": l1 and l2 are strictly positive
-            l1 = 0.1  # this assumption comes from somewhere else but not sure where
-            l2 = 0.01
-
-    except:
-        l1 = 0.1
-        l2 = 0.01
-
-    return [l1, l2, 0, 0]
+    return [l1]
 
 def single_constraint(vars, func_vals, func_index, target_value, scales):
     """
@@ -257,64 +271,34 @@ def run_optimization(vars, macro_var, func_vals, slack_weight=1, maxiter=1e08):
 
     # Compute bounds (to prevent overflow in exp)
     f3_vals = func_vals[2, :, :]
-    f4_vals = func_vals[3, :, :]
     min_f3, max_f3 = f3_vals.min(), f3_vals.max()
-    min_f4, max_f4 = f4_vals.min(), f4_vals.max()
     bounds_dn = compute_lambda_bounds(min_f3, max_f3, 100)
-    bounds_de = compute_lambda_bounds(min_f4, max_f4, 100)
 
     # Define scale factors so that parameters are roughly of the same order of magnitude
-    values = np.asarray([vars[0], vars[1], bounds_dn[1], bounds_de[1]], dtype=float)
+    values = np.asarray([vars[0], bounds_dn[1]], dtype=float)
 
     scales = np.where(values != 0,
                     10.0 ** np.floor(np.log10(np.abs(values))),
                     1.0)
-    scales = np.append(scales, [1, 1])
     vars = vars / scales
 
     bounds = [
         (0, 18) / scales[0],
-        (0, 18) / scales[1],
-        bounds_dn / scales[2],
-        bounds_de / scales[3],
-        (0, None),
-        (0, None)
+        bounds_dn / scales[2]
     ]
 
     # Collect all constraints
-    constraint_order = ['N/S', 'E/S', 'dN/S', 'dE/S']
+    constraint_order = ['N/S', 'dN/S']
 
-    # constraints = [{
-    #     'type': 'eq',
-    #     'fun': lambda vars, F_k=macro_var[name], idx=i:
-    #     single_constraint(vars, func_vals, idx, F_k, scales)
-    # } for i, name in enumerate(constraint_order)]
-
-    constraints = (
-        # equalities (first two)
-            [{
-                'type': 'eq',
-                'fun': lambda vars, F_k=macro_var[name], idx=i:
-                single_constraint(vars, func_vals, idx, F_k, scales)
-            } for i, name in enumerate(constraint_order[:2])]
-            +
-            # inequalities (last two, both lb and ub)
-            [{
-                'type': 'ineq',
-                'fun': lambda vars, F_k=macro_var[name], idx=i:
-                inequality_constraint_lb(vars, func_vals, idx, F_k, scales)
-            } for i, name in enumerate(constraint_order[2:], start=2)]
-            +
-            [{
-                'type': 'ineq',
-                'fun': lambda vars, F_k=macro_var[name], idx=i:
-                inequality_constraint_ub(vars, func_vals, idx, F_k, scales)
-            } for i, name in enumerate(constraint_order[2:], start=2)]
-    )
+    constraints = [{
+        'type': 'eq',
+        'fun': lambda vars, F_k=macro_var[name], idx=i:
+        single_constraint(vars, func_vals, idx, F_k, scales)
+    } for i, name in enumerate(constraint_order)[:1]]
 
     result = minimize(penalized_entropy,
                       vars,
-                      jac=penalized_entropy_grad,
+                      #jac=penalized_entropy_grad,
                       args=(func_vals, macro_var, scales, slack_weight),
                       constraints=constraints,
                       bounds=bounds,
@@ -535,44 +519,42 @@ if __name__ == "__main__":
 
     for model in ['a', 'b', 'c', 'd', 'e', 'f']:
         for var in [0.0, 0.05, 0.1, 0.2]:
-            for iter in range(10):
 
+            for iter in range(25):
                 ext = f'_model={model}_var={var}_iter={iter}'
+                df = three_groups_LV(model, T=8, var=var)
 
-                # Simulate data ...
+                # choose only a small number of censuses to do the analysis on
+                censuses = df['census'].unique()[::4]
 
                 # Compute polynomial coefficients
-                alphas, r2_dn, scaler = sindy(input)
+                alphas, r2_dn, scaler = sindy(df)
                 functions = get_functions()
                 alphas = alphas['Coefficient'].values
 
                 # Create list to store results
                 results_list = []
 
-                for census in input['census'].unique():
+                for census in df['census'].unique():
                     print(f"\n Census: {census} \n")
-                    input_census = input[input['census'] == census]
+                    input_census = df[df['census'] == census]
 
                     X = input_census[[
-                        'S_t', 'N_t', 'E_t',
+                        'S_t', 'N_t'
                     ]].drop_duplicates().iloc[0]
 
                     macro_var = {
                         'N/S': float(X['N_t'] / X['S_t']),
-                        'E/S': float(X['E_t'] / X['S_t']),
-                        'dN/S': input_census['dN/S'].unique()[0],
-                        'dE/S': input_census['dE/S'].unique()[0]
+                        'dN/S': input_census['dN/S'].unique()[0]
                     }
 
-                    # Get empirical rank abundance distribution
-                    empirical_rad = get_empirical_RAD(f'../../data/BCI_regression_library{ext}.csv', census)['abundance']
-
                     # Precompute functions(n, e)
-                    max_n = int(min(X['N_t'], 1.5 * max(input_census['n'])))
+                    func_vals = get_function_values(functions, X, alphas, scaler,
+                                                    show_landscape=True)
 
-                    func_vals, _ = get_function_values(functions, X, alphas, scaler,
-                                                       [max_n],
-                                                       show_landscape=True)
+                    # Get empirical rank abundance distribution
+                    grouped = input_census.groupby('species')['n'].sum()
+                    empirical_rad = grouped.sort_values(ascending=False).values
 
                     #######################################
                     #####            METE             #####
@@ -597,12 +579,12 @@ if __name__ == "__main__":
                     #####           METimE            #####
                     #######################################
 
-                    for w in [0]:
+                    for w in [1]:
                         print(" ")
                         print("----------METimE----------")
                         METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=1e10)
-                        print("Optimized lambdas: {}".format(METimE_lambdas[:2]))
-                        print("Slack variables: {}".format(METimE_lambdas[2:]))
+                        print("Optimized lambdas: {}".format(METimE_lambdas[:1]))
+                        print("Slack variables: {}".format(METimE_lambdas[1:]))
                         metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
                         METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
                         print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
@@ -611,23 +593,16 @@ if __name__ == "__main__":
                         #####           Save results         #####
                         ##########################################
                         results_list.append({
-                            'quad': ext,
+                            'model': model,
                             'census': census,
                             'slack_weight': w,
                             'N/S': macro_var['N/S'],
-                            'E/S': macro_var['E/S'],
                             'dN/S': macro_var['dN/S'],
-                            'dE/S': macro_var['dE/S'],
                             'r2_dn': r2_dn,
-                            'r2_de': r2_de,
                             'METE_error_N/S': mete_constraint_errors[0],
-                            'METE_error_E/S': mete_constraint_errors[1],
                             'METE_error_dN/S': mete_constraint_errors[2],
-                            'METE_error_dE/S': mete_constraint_errors[3],
                             'METimE_error_N/S': metime_constraint_errors[0],
-                            'METimE_error_E/S': metime_constraint_errors[1],
                             'METimE_error_dN/S': metime_constraint_errors[2],
-                            'METimE_error_dE/S': metime_constraint_errors[3],
                             'METE_AIC': METE_results['AIC'].values[0],
                             'METE_MAE': METE_results['MAE'].values[0],
                             'METE_RMSE': METE_results['RMSE'].values[0],
@@ -636,7 +611,8 @@ if __name__ == "__main__":
                             'METimE_RMSE': METimE_results['RMSE'].values[0]
                         })
 
-                        plot_RADs(empirical_rad, METE_rad, METimE_rad, f'quad_{ext}_census_{census}_w_{w}', use_log=True)
+                        if iter == 0:
+                            plot_RADs(empirical_rad, METE_rad, METimE_rad, f'model_{ext}_census={census}_w_{w}', use_log=True)
 
                 results_df = pd.DataFrame(results_list)
-                results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/empirical_BCI_df/empirical_BCI_df{ext}.csv', index=False)
+                results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/results_LV_df{ext}.csv', index=False)

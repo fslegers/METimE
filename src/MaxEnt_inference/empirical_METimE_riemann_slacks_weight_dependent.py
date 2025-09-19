@@ -98,9 +98,14 @@ def get_relative_errors(vars, func_vals, func_index, target_value, scales):
     return ((expected_value - target_value) / target_value)
 
 def penalized_entropy(vars, func_vals, macro_var, scales, slack_weight = 1.0):
-    return (entropy(vars, func_vals, scales) + slack_weight * (
-            (get_relative_errors(vars, func_vals, 2, macro_var['dN/S'], scales)) ** 2 +
-            (get_relative_errors(vars, func_vals, 3, macro_var['dE/S'], scales)) ** 2))
+    if len(macro_var) > 3:
+        return (entropy(vars, func_vals, scales) + slack_weight * (
+                (get_relative_errors(vars, func_vals, 2, macro_var['dN/S'], scales)) ** 2 +
+                (get_relative_errors(vars, func_vals, 3, macro_var['dE/S'], scales)) ** 2))
+    else:
+        return (entropy(vars, func_vals, scales) + slack_weight * (
+                (get_relative_errors(vars, func_vals, 2, macro_var['dN/S'], scales)) ** 2))
+
 
 def penalized_entropy_grad(vars, func_vals, macro_var, scales, slack_weight = 1.0):
     """
@@ -108,7 +113,7 @@ def penalized_entropy_grad(vars, func_vals, macro_var, scales, slack_weight = 1.
     """
     # Scale back lambdas
     vars = vars * scales
-    lambdas = vars[:4]
+    lambdas = vars[:func_vals.shape[0]]
 
     # Partition function and R
     Z = partition_function(lambdas, func_vals)
@@ -206,7 +211,7 @@ def single_constraint(vars, func_vals, func_index, target_value, scales):
     """
     # Scale back lambdas
     vars = vars * scales
-    lambdas = vars[:4]
+    lambdas = vars[:func_vals.shape[0]]
 
     # Partition function Z
     Z = partition_function(lambdas, func_vals)
@@ -262,29 +267,47 @@ def run_optimization(vars, macro_var, func_vals, slack_weight=1, maxiter=1e08):
 
     # Compute bounds (to prevent overflow in exp)
     f3_vals = func_vals[2, :, :]
-    f4_vals = func_vals[3, :, :]
     min_f3, max_f3 = f3_vals.min(), f3_vals.max()
-    min_f4, max_f4 = f4_vals.min(), f4_vals.max()
     bounds_dn = compute_lambda_bounds(min_f3, max_f3, 100)
-    bounds_de = compute_lambda_bounds(min_f4, max_f4, 100)
 
-    # Define scale factors so that parameters are roughly of the same order of magnitude
-    values = np.asarray([vars[0], vars[1], bounds_dn[1], bounds_de[1]], dtype=float)
+    if len(macro_var) > 3:
+        f4_vals = func_vals[3, :, :]
+        min_f4, max_f4 = f4_vals.min(), f4_vals.max()
+        bounds_de = compute_lambda_bounds(min_f4, max_f4, 100)
 
-    scales = np.where(values != 0,
-                    10.0 ** np.floor(np.log10(np.abs(values))),
-                    1.0)
-    vars = vars / scales
+        # Define scale factors so that parameters are roughly of the same order of magnitude
+        values = np.asarray([vars[0], vars[1], bounds_dn[1], bounds_de[1]], dtype=float)
 
-    bounds = [
-        (0, 18) / scales[0],
-        (0, 18) / scales[1],
-        bounds_dn / scales[2],
-        bounds_de / scales[3]
-    ]
+        scales = np.where(values != 0,
+                        10.0 ** np.floor(np.log10(np.abs(values))),
+                        1.0)
+        vars = vars / scales
 
-    # Collect all constraints
-    constraint_order = ['N/S', 'E/S', 'dN/S', 'dE/S']
+        bounds = [
+            (0, 18) / scales[0],
+            (0, 18) / scales[1],
+            bounds_dn / scales[2],
+            bounds_de / scales[3]
+        ]
+
+        constraint_order = ['N/S', 'E/S', 'dN/S', 'dE/S']
+
+    else:
+        values = np.asarray([vars[0], vars[1], bounds_dn[1]], dtype=float)
+
+        scales = np.where(values != 0,
+                          10.0 ** np.floor(np.log10(np.abs(values))),
+                          1.0)
+        vars = vars / scales
+
+        bounds = [
+            (0, 18) / scales[0],
+            (0, 18) / scales[1],
+            bounds_dn / scales[2]
+        ]
+
+        # Collect all constraints
+        constraint_order = ['N/S', 'E/S', 'dN/S']
 
     constraints = [{
         'type': 'eq',
@@ -295,14 +318,15 @@ def run_optimization(vars, macro_var, func_vals, slack_weight=1, maxiter=1e08):
 
     result = minimize(penalized_entropy,
                       vars,
-                      jac=penalized_entropy_grad,
+                      #jac=penalized_entropy_grad,
                       args=(func_vals, macro_var, scales, slack_weight),
                       constraints=constraints,
                       bounds=bounds,
                       method="trust-constr",
                       options={'maxiter':maxiter,
                                'initial_tr_radius': 0.05,
-                               #'gtol': 1e-12,
+                               'xtol': 1e-10,
+                               'gtol': 1e-12,
                                'disp': True,
                                'verbose': 1})
 
@@ -311,8 +335,8 @@ def run_optimization(vars, macro_var, func_vals, slack_weight=1, maxiter=1e08):
     return optimized_lambdas
 
 def evaluate_model(lambdas, X, func_vals, empirical_rad, constraint_errors):
-    Z = partition_function(lambdas[:4], func_vals)
-    R = ecosystem_structure_function(lambdas[:4], func_vals, Z)
+    Z = partition_function(lambdas[:func_vals.shape[0]], func_vals)
+    R = ecosystem_structure_function(lambdas[:func_vals.shape[0]], func_vals, Z)
 
     # Compute SAD
     sad = np.sum(R, axis=1)
@@ -382,8 +406,8 @@ def check_constraints(lambdas, input, func_vals):
         'dE/S': input['dE/S'].unique()[0]
     }
 
-    Z = partition_function(lambdas[:4], func_vals)
-    R = ecosystem_structure_function(lambdas[:4], func_vals, Z)
+    Z = partition_function(lambdas[:func_vals.shape[0]], func_vals)
+    R = ecosystem_structure_function(lambdas[:func_vals.shape[0]], func_vals, Z)
 
     absolute_errors = []
     percentage_errors = []
@@ -530,8 +554,9 @@ def add_row(data):
 
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for i in [1]:
+    for i in [2, 3, 4, 5, 6, 7, 8, 1, 0]:
         ext = f'_quadrat_{i}'
+        #ext = ''
 
         # Load data
         input = pd.read_csv(f'../../data/BCI_regression_library{ext}.csv')
@@ -569,6 +594,9 @@ if __name__ == "__main__":
             # Precompute functions(n, e)
             #max_n = int(min(X['N_t'], 1.5 * max(input_census['n'])))
             max_n = int(X['N_t']-X['S_t'])
+
+            if max_n > 1000:
+                max_n = int(max(input_census['n']))
             min_e = max(1, -1.5 * input_census['e'].quantile(0.15))
             max_e = min(X['E_t'], 1.5 * input_census['e'].quantile(0.85))
 

@@ -118,17 +118,23 @@ def do_polynomial_regression(df, lv_ratio=0.6):
     # Drop 'tree_id' and dN/S and dE/S columns
     df = df.drop(columns=['TreeID', 'dN/S', 'dE/S', 'dS'], errors='ignore')
 
+    df_means = df.groupby(['census', 'species']).mean().reset_index()
+    dn_obs = df_means['dn'].values
+    de_obs = df_means['de'].values
+    targets = [(dn_obs, 'dn'), (de_obs, 'de')]
+
+    # TODO: What should we do here?
     # Here, we take averages per species over features calculated per tree
     # Group by (t, species_id) and sum all features
     df_grouped = df.groupby(['census', 'species']).sum().reset_index()
 
     # Run STLSQ
-    coef_dn, r2_dn, coef_de, r2_de, scaler = stepwise_sparse_regression(df_grouped, lv_ratio)
+    coef_dn, r2_dn, coef_de, r2_de, scaler = stepwise_sparse_regression(df_grouped, targets, lv_ratio)
     print(f"R2 dn: {r2_dn}, R2 de: {r2_de}")
 
     return coef_dn, r2_dn, coef_de, r2_de, scaler
 
-def stepwise_sparse_regression(df_grouped, alpha=0.01):
+def stepwise_sparse_regression(df, targets, alpha=0.01):
     """
     Sequential Threshold Least Squares (STLSQ) for sparse regression.
     Fits dn and de simultaneously, returning coefficient DataFrames.
@@ -147,21 +153,18 @@ def stepwise_sparse_regression(df_grouped, alpha=0.01):
     """
 
     # Split into target and features
-    dn_obs = df_grouped['dn'].values
-    de_obs = df_grouped['de'].values
-    X = df_grouped.drop(columns=['census', 'species', 'dn', 'de'], errors='ignore')
+    X = df.drop(columns=['census', 'species', 'dn', 'de'], errors='ignore')
 
     feature_names = X.columns.tolist()
 
     # Standardize features
-    scaler = StandardScaler(with_mean=True)
+    scaler = StandardScaler(with_mean=False) # TODO: think about this!
     X_scaled = scaler.fit_transform(X)
 
     results = []
     r2s = []
 
-    for y_obs, target_name in [(dn_obs, 'dn'), (de_obs, 'de')]:
-
+    for y_obs, target_name in targets:
         # initial Lasso fit
         model = Lasso(alpha=alpha, fit_intercept=False)
         model.fit(X_scaled, y_obs)
@@ -169,8 +172,16 @@ def stepwise_sparse_regression(df_grouped, alpha=0.01):
         prev_r2 = r2_score(y_obs, y_pred)
         best_coef = model.coef_.copy()
 
-        for _ in range(len(feature_names) - 1):
+        if np.all(best_coef == 0):
+            coef_df = pd.DataFrame({
+                'feature': feature_names,
+                'Coefficient': best_coef.tolist()
+            })
+            results.append(coef_df)
+            r2s.append(r2_score(y_obs, y_pred))
+            continue
 
+        for _ in range(len(feature_names) - 2):
             # Identify the index of the smallest non-zero coefficient
             non_zero_idx = np.where(best_coef != 0)[0]
             if len(non_zero_idx) <= 1:
@@ -207,13 +218,17 @@ def stepwise_sparse_regression(df_grouped, alpha=0.01):
 
         # Recalculate non-zero coefficients (with weaker l1 norm regularization)
         mask = best_coef != 0
-        model = ElasticNetCV(l1_ratio=0.5, alphas=np.logspace(-3, 1, 50), fit_intercept=False)
-        model.fit(X_scaled[:, mask], y_obs)
-        coef_new = np.zeros_like(best_coef)
-        coef_new[mask] = model.coef_
-        best_coef = coef_new
-        y_pred = model.predict(X_scaled[:, mask])
-        r2 = r2_score(y_obs, y_pred)
+
+        if np.any(mask):
+            model = ElasticNetCV(l1_ratio=0.5, alphas=np.logspace(-3, 1, 50), fit_intercept=False)
+            model.fit(X_scaled[:, mask], y_obs)
+            coef_new = np.zeros_like(best_coef)
+            coef_new[mask] = model.coef_
+            best_coef = coef_new
+            y_pred = model.predict(X_scaled[:, mask])
+            r2 = r2_score(y_obs, y_pred)
+        else:
+            r2 = 0.0
 
         # store results
         coef_df = pd.DataFrame({
@@ -249,7 +264,7 @@ def get_function_values(functions, X, alphas, betas, scaler, maxima, show_landsc
     # Create n,e grid
     n_max, e_min, e_max = maxima
     n_vals = np.arange(1, n_max + 1, dtype=float)
-    e_vals = np.linspace(e_min, e_max, num=50, dtype=float)
+    e_vals = np.linspace(e_min, e_max, num=30, dtype=float)
     n_grid, e_grid = np.meshgrid(n_vals, e_vals, indexing='ij')
 
     # Fill grid

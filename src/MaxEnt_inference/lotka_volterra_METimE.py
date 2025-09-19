@@ -529,6 +529,7 @@ if __name__ == "__main__":
 
                 y, y_pred, coeffs = set_up_regression(df, var, LV_model=model, regression_type="global")
                 r2_transition = r2_score(y, y_pred)
+
                 coeffs = coeffs['Coefficient'].tolist()
 
                 for census in censuses:

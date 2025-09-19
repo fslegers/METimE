@@ -110,7 +110,7 @@ def create_df(solutions):
     dN = np.diff(total_N, append=0)
     dS = np.diff(richness_S, append=0)
 
-    df["dN"] = np.repeat(dN, S)
+    df["dN/S"] = np.repeat(dN/S, S)
     df["dS"] = np.repeat(dS, S)
 
     df = df[df['census'] < 20]

@@ -54,11 +54,19 @@ def load_BCI():
     df_next = df_next[['species', 'census', 'TreeID', 'next_n', 'next_e', 'next_S', 'next_N', 'next_E']]
     df = df.merge(df_next, how='left', on=['species', 'census', 'TreeID'])
 
+    # Change NaNs in df['next_n'] and df['next_e'] to 0'
+    df['next_n'] = df['next_n'].fillna(0).astype(int)
+    df['next_e'] = df['next_e'].fillna(0).astype(int)
+
+    # Fill in S, N, and E by any other entrie from the same census
+    df[['next_S', 'next_N', 'next_E']] = df.groupby(['species', 'census'])[['next_S', 'next_N', 'next_E']].transform(
+        lambda x: x.fillna(method='ffill').fillna(method='bfill'))
+
     df['dn'] = df['next_n'] - df['n']
     df['de'] = df['next_e'] - df['e']
-    df['dS'] = df['next_S'] - df['S_t']
-    df['dN/S'] = (df['next_N'] - df['N_t'])/df['S_t']
-    df['dE/S'] = (df['next_E'] - df['E_t'])/df['S_t']
+    # df['dS'] = df['next_S'] - df['S_t']
+    df['dN/S'] = (df['next_N'] - df['N_t']) / df['S_t']
+    df['dE/S'] = (df['next_E'] - df['E_t']) / df['S_t']
 
     df = df.drop(columns=['next_n', 'next_S', 'next_e', 'next_N', 'next_E'], axis=1)
 
