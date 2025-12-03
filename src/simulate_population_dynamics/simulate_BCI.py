@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import seaborn as sns
 
 from src.MaxEnt_inference.empirical_METimE_riemann import get_empirical_RAD, make_initial_guess, partition_function, ecosystem_structure_function
 from src.parametrize_transition_functions.SINDy_like_regression import do_polynomial_regression as sindy
@@ -36,7 +37,7 @@ def get_SAD(lambdas, X, de):
     # sad = sad / sum(sad)
     # return sad
     functions = get_functions()[:2]
-    func_vals, _ = get_function_values(functions, X, [], [], de)
+    func_vals, _ = get_function_values(functions, X, [], [], maxima = [X['N_t'], 1, X['E_t']])
     Z = partition_function(lambdas, func_vals)
     R = ecosystem_structure_function(lambdas, func_vals, Z)
     sad = np.sum(R, axis=1)
@@ -61,7 +62,7 @@ def sample_community(X):
     # Precompute functions(n, e)
     de = 0.5
     functions = get_functions()[:2]
-    func_vals, _ = get_function_values(functions, temp_X, [], [], de)
+    func_vals, _ = get_function_values(functions, temp_X, [], [], scaler=[1, 1], maxima=[X['N'], 1, X['E']])
 
     initial_lambdas = make_initial_guess(temp_X)
     lambdas = METE(
@@ -310,6 +311,16 @@ def gillespie(metabolic_rates, species_indices, tree_id_list, p, t_max, obs_inte
 
 
 def plot_state_var(df, frac):
+    plt.rcParams.update({
+        'font.size': 18,  # General font size
+        'axes.labelsize': 22,  # Axis label size
+        'axes.titlesize': 22,  # Title size (if you add titles)
+        'xtick.labelsize': 16,  # X tick label size
+        'ytick.labelsize': 16,  # Y tick label size
+        'legend.fontsize': 16
+    })
+
+
     # Create three horizontally aligned subplots
     fig, axes = plt.subplots(ncols=3, figsize=(18, 5), sharex=True)
 
@@ -317,26 +328,29 @@ def plot_state_var(df, frac):
     axes[0].plot(df['t'], df['S'], color='tab:blue', marker='o')
     #axes[0].set_title('S (Species count) vs Time')
     axes[0].set_xlabel('time (t)')
-    axes[0].set_ylabel('S_t')
+    axes[0].set_ylabel(r'$S_t$')
     axes[0].grid(True)
 
     # Plot N vs time
     axes[1].plot(df['t'], df['N'], color='tab:green', marker='s')
     #axes[1].set_title('N (Abundance) vs Time')
     axes[1].set_xlabel('time (t)')
-    axes[1].set_ylabel('N_t')
+    axes[1].set_ylabel(r'$N_t$')
     axes[1].grid(True)
 
     # Plot E vs time
     axes[2].plot(df['t'], df['E'], color='tab:red', marker='^')
     #axes[2].set_title('E (Energy) vs Time')
     axes[2].set_xlabel('time (t)')
-    axes[2].set_ylabel('E_t')
+    axes[2].set_ylabel(r'$E_t$')
     axes[2].grid(True)
 
     # Adjust layout
     plt.tight_layout()
+    plt.savefig('equilibrium', dpi=300, transparent=True)
     plt.show()
+
+    print("stop")
     #plt.savefig(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/simulated_BCI_state_variables_{frac}.png')
     #plt.close()
 
@@ -445,144 +459,167 @@ def run_simulation(X, p, frac, n_iter=1, t_max=30.0, obs_interval=0.25, start_fr
         })
 
         # Compute polynomial coefficients
-
+        make_boxplot(df)
         alphas, r2_dn, betas, r2_de, scaler = sindy(df)
         r2s = pd.DataFrame({'r2_dn': [r2_dn], 'r2_de': [r2_de]})
-        print(r2s)
+        #print(r2s)
 
         alphas = alphas['Coefficient'].values
         betas = betas['Coefficient'].values
         functions = get_functions()
 
-        # For 3 cencuses, perform MaxEnt inference
-        for census in [1]:
-            input_census = df[df['census'] == census]
+    #     # For 3 cencuses, perform MaxEnt inference
+    #     for census in [1]:
+    #         input_census = df[df['census'] == census]
+    #
+    #         X = input_census[[
+    #             'S_t', 'N_t', 'E_t',
+    #         ]].drop_duplicates().iloc[0]
+    #
+    #         macro_var = {
+    #             'N/S': float(X['N_t'] / X['S_t']),
+    #             'E/S': float(X['E_t'] / X['S_t']),
+    #             'dN/S': input_census['dN/S'].unique()[0],
+    #             'dE/S': input_census['dE/S'].unique()[0]
+    #         }
+    #
+    #         print("macro_var")
+    #         print(macro_var)
+    #
+    #         # Get empirical rank abundance distribution
+    #         empirical_rad = get_empirical_RAD(input_census, census)['abundance']
+    #
+    #         # Precompute functions(n, e)
+    #         max_n = int(X['N_t'] - X['S_t'])
+    #         min_e = 1
+    #         max_e = min(X['E_t'], max(input_census['e']))
+    #
+    #         func_vals, _ = get_function_values(functions, X, alphas, betas, scaler,
+    #                                            [max_n, min_e, max_e],
+    #                                            show_landscape=False,
+    #                                            training_points=input_census[['n', 'e']].values)
+    #
+    #         #######################################
+    #         #####            METE             #####
+    #         #######################################
+    #         print(" ")
+    #         print("----------METE----------")
+    #         # Make initial guess
+    #         initial_lambdas = make_initial_guess(X)
+    #         METE_lambdas = METE(
+    #             initial_lambdas[:2],
+    #             {
+    #                 'N/S': float(X['N_t'] / X['S_t']),
+    #                 'E/S': float(X['E_t'] / X['S_t'])
+    #             },
+    #             X,
+    #             func_vals[:2],
+    #             optimizer='trust-constr',
+    #             maxiter=5e5
+    #         )
+    #         METE_lambdas = np.append(METE_lambdas, [0, 0])
+    #         print("Optimized lambdas: {}".format(METE_lambdas[:2]))
+    #         mete_constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
+    #         METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad, mete_constraint_errors)
+    #         #METE_lambdas = np.append(METE_lambdas, [0, 0])
+    #         print(
+    #             f"AIC: {METE_results['AIC'].values[0]}, RMSE: {METE_results['RMSE'].values[0]}, MAE: {METE_results['MAE'].values[0]}")
+    #
+    #         prev_best_MAE = np.inf
+    #         for w_exp in np.arange(-1, 1, 1, dtype=float):
+    #             for w_base in [1, 3, 5, 7, 9]:
+    #                 w = w_base * 10 ** w_exp
+    #                 print("Slack weight = {w}".format(w=w))
+    #
+    #                 #######################################
+    #                 #####           METimE            #####
+    #                 #######################################
+    #                 print(" ")
+    #                 print("----------METimE----------")
+    #                 METimE_lambdas = METimE(
+    #                     METE_lambdas[:3],
+    #                     {
+    #                         'N/S': float(X['N_t'] / X['S_t']),
+    #                         'E/S': float(X['E_t'] / X['S_t']),
+    #                         'dN/S': input_census['dN/S'].unique()[0],
+    #                     },
+    #                     func_vals[:3],
+    #                     w,
+    #                     maxiter=1e4
+    #                 )
+    #                 print("Optimized lambdas: {}".format(METimE_lambdas[:3]))
+    #
+    #                 METimE_lambdas = np.append(METimE_lambdas[:3], [0])
+    #                 metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
+    #                 METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
+    #                 print(f"AIC: {METimE_results['AIC'].values[0]}, RMSE: {METimE_results['RMSE'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
+    #
+    #                 ##########################################
+    #                 #####           Save results         #####
+    #                 ##########################################
+    #                 results_list.append({
+    #                     'iter': iter,
+    #                     'frac': frac,
+    #                     'census': census,
+    #                     'slack_weight': w,
+    #                     'r2_dn': r2_dn,
+    #                     'r2_de': r2_de,
+    #                     'METE_error_N/S': mete_constraint_errors[0],
+    #                     'METE_error_E/S': mete_constraint_errors[1],
+    #                     'METE_error_dN/S': mete_constraint_errors[2],
+    #                     'METE_error_dE/S': mete_constraint_errors[3],
+    #                     'METimE_error_N/S': metime_constraint_errors[0],
+    #                     'METimE_error_E/S': metime_constraint_errors[1],
+    #                     'METimE_error_dN/S': metime_constraint_errors[2],
+    #                     'METimE_error_dE/S': metime_constraint_errors[3],
+    #                     'METE_AIC': METE_results['AIC'].values[0],
+    #                     'METE_MAE': METE_results['MAE'].values[0],
+    #                     'METE_RMSE': METE_results['RMSE'].values[0],
+    #                     'METimE_AIC': METimE_results['AIC'].values[0],
+    #                     'METimE_MAE': METimE_results['MAE'].values[0],
+    #                     'METimE_RMSE': METimE_results['RMSE'].values[0]
+    #                 })
+    #
+    #                 # add_row({
+    #                 #     "frac": frac,
+    #                 #     "census": census,
+    #                 #     "slack_weight": w,
+    #                 #     "AIC": METimE_results['AIC'].values[0],
+    #                 #     "RMSE": METimE_results['RMSE'].values[0],
+    #                 #     "MAE": METimE_results['MAE'].values[0],
+    #                 #     "entropy": -entropy(METimE_lambdas[:4], func_vals)
+    #                 # })
+    #
+    #                 if METimE_results['MAE'].values[0] < prev_best_MAE:
+    #                     ext = f"new_simulated_census={census}_weight_dependent_iter={iter}_frac={frac}.png"
+    #                     plot_RADs(empirical_rad, METE_rad, METimE_rad, ext, obs_label="Simulated", weight=w, use_log=True)
+    #                     prev_best_MAE = METimE_results['MAE'].values[0]
+    #
+    # results_df = pd.DataFrame(results_list)
+    # results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/new_simulated_BCI_weight_dependent_{frac}.csv', index=False)
 
-            X = input_census[[
-                'S_t', 'N_t', 'E_t',
-            ]].drop_duplicates().iloc[0]
+def make_boxplot(df):
+    fig, axes = plt.subplots(1, 2, figsize=(10, 6))  # 1 row, 2 columns
+    fig.suptitle(f"Fraction removed: {frac}", fontsize=16)  # figure title
 
-            macro_var = {
-                'N/S': float(X['N_t'] / X['S_t']),
-                'E/S': float(X['E_t'] / X['S_t']),
-                'dN/S': input_census['dN/S'].unique()[0],
-                'dE/S': input_census['dE/S'].unique()[0]
-            }
+    # Left subplot: boxplot of df['dn']
+    sns.boxplot(y=df["dn"], ax=axes[0], showfliers=False)
+    axes[0].set_title("dn")  # optional axis title
+    axes[0].set_xlabel("")  # remove x-label if you like
+    #axes[0].set_yscale("symlog")
 
-            print("macro_var")
-            print(macro_var)
+    # Right subplot: boxplot of df['de']
+    sns.boxplot(y=df["de"], ax=axes[1], showfliers=False)
+    axes[1].set_title("de")
+    axes[1].set_xlabel("")
+    #axes[1].set_yscale("symlog")
 
-            # Get empirical rank abundance distribution
-            empirical_rad = get_empirical_RAD(input_census, census)['abundance']
+    # Make sure subplots do not share y scale
+    for ax in axes:
+        ax.autoscale(enable=True, axis='y', tight=False)
 
-            # Precompute functions(n, e)
-            max_n = int(X['N_t'] - X['S_t'])
-            min_e = 1
-            max_e = min(X['E_t'], max(input_census['e']))
-
-            func_vals, _ = get_function_values(functions, X, alphas, betas, scaler,
-                                               [max_n, min_e, max_e],
-                                               show_landscape=True,
-                                               training_points=input_census[['n', 'e']].values)
-
-            #######################################
-            #####            METE             #####
-            #######################################
-            print(" ")
-            print("----------METE----------")
-            # Make initial guess
-            initial_lambdas = make_initial_guess(X)
-            METE_lambdas = METE(
-                initial_lambdas[:2],
-                {
-                    'N/S': float(X['N_t'] / X['S_t']),
-                    'E/S': float(X['E_t'] / X['S_t'])
-                },
-                X,
-                func_vals[:2],
-                optimizer='trust-constr',
-                maxiter=1e6
-            )
-            METE_lambdas = np.append(METE_lambdas, [0, 0])
-            print("Optimized lambdas: {}".format(METE_lambdas[:2]))
-            mete_constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
-            METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad, mete_constraint_errors)
-            #METE_lambdas = np.append(METE_lambdas, [0, 0])
-            print(
-                f"AIC: {METE_results['AIC'].values[0]}, RMSE: {METE_results['RMSE'].values[0]}, MAE: {METE_results['MAE'].values[0]}")
-
-            prev_best_MAE = np.inf
-            for w_exp in np.arange(-1, 2, 1, dtype=float):
-                for w_base in [1, 3, 5, 7, 9]:
-                    w = w_base * 10 ** w_exp
-                    print("Slack weight = {w}".format(w=w))
-
-                    #######################################
-                    #####           METimE            #####
-                    #######################################
-                    print(" ")
-                    print("----------METimE----------")
-                    METimE_lambdas = METimE(
-                        METE_lambdas[:3],
-                        {
-                            'N/S': float(X['N_t'] / X['S_t']),
-                            'E/S': float(X['E_t'] / X['S_t']),
-                            'dN/S': input_census['dN/S'].unique()[0],
-                        },
-                        func_vals[:3],
-                        w,
-                        maxiter=1e5
-                    )
-                    print("Optimized lambdas: {}".format(METimE_lambdas[:3]))
-
-                    METimE_lambdas = np.append(METimE_lambdas[:3], [0])
-                    metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
-                    METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
-                    print(f"AIC: {METimE_results['AIC'].values[0]}, RMSE: {METimE_results['RMSE'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
-
-                    ##########################################
-                    #####           Save results         #####
-                    ##########################################
-                    results_list.append({
-                        'iter': iter,
-                        'frac': frac,
-                        'census': census,
-                        'slack_weight': w,
-                        'r2_dn': r2_dn,
-                        'r2_de': r2_de,
-                        'METE_error_N/S': mete_constraint_errors[0],
-                        'METE_error_E/S': mete_constraint_errors[1],
-                        'METE_error_dN/S': mete_constraint_errors[2],
-                        'METE_error_dE/S': mete_constraint_errors[3],
-                        'METimE_error_N/S': metime_constraint_errors[0],
-                        'METimE_error_E/S': metime_constraint_errors[1],
-                        'METimE_error_dN/S': metime_constraint_errors[2],
-                        'METimE_error_dE/S': metime_constraint_errors[3],
-                        'METE_AIC': METE_results['AIC'].values[0],
-                        'METE_MAE': METE_results['MAE'].values[0],
-                        'METE_RMSE': METE_results['RMSE'].values[0],
-                        'METimE_AIC': METimE_results['AIC'].values[0],
-                        'METimE_MAE': METimE_results['MAE'].values[0],
-                        'METimE_RMSE': METimE_results['RMSE'].values[0]
-                    })
-
-                    # add_row({
-                    #     "frac": frac,
-                    #     "census": census,
-                    #     "slack_weight": w,
-                    #     "AIC": METimE_results['AIC'].values[0],
-                    #     "RMSE": METimE_results['RMSE'].values[0],
-                    #     "MAE": METimE_results['MAE'].values[0],
-                    #     "entropy": -entropy(METimE_lambdas[:4], func_vals)
-                    # })
-
-                    if METimE_results['MAE'].values[0] < prev_best_MAE:
-                        ext = f"new_simulated_census={census}_weight_dependent_iter={iter}_frac={frac}.png"
-                        plot_RADs(empirical_rad, METE_rad, METimE_rad, ext, obs_label="Simulated", weight=w, use_log=True)
-                        prev_best_MAE = METimE_results['MAE'].values[0]
-
-    results_df = pd.DataFrame(results_list)
-    results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/new_simulated_BCI_weight_dependent_{frac}.csv', index=False)
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # leave space for suptitle
+    plt.show()
 
 
 def load_simple_dynaMETE():

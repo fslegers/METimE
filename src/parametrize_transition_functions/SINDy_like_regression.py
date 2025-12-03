@@ -1,3 +1,5 @@
+import csv
+
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -23,48 +25,53 @@ def remove_outliers(df):
 
     return df_clean
 
-def remove_extreme_features(feature_names, coef, l1_ratio, alphas, prev_r2, X_scaled, y_obs):
-    patterns = [r"N_t", r"E_t", r"^2"]
-
-    # Find indices & names of features that match
-    potential_features_to_remove = [
-        (i, fname)
-        for i, fname in enumerate(feature_names)
-        if any(re.search(p, fname) for p in patterns)
-    ]
-
-    for index, feature in potential_features_to_remove:
-        new_coef = coef.copy()
-        new_coef[index] = 0
-
-        mask = new_coef != 0
-        model = ElasticNetCV(l1_ratio=l1_ratio, alphas=alphas, fit_intercept=False)
-        model.fit(X_scaled[:, mask], y_obs)
-
-        new_coef = np.zeros_like(new_coef)
-        new_coef[mask] = model.coef_
-
-        y_pred = model.predict(X_scaled[:, mask])
-        r2 = r2_score(y_obs, y_pred)
-
-        if prev_r2 - r2 > 1e-3:
-            break
-
-        prev_r2 = r2
-        best_coef = new_coef.copy()
-
-    return best_coef, prev_r2
+# def remove_extreme_features(feature_names, coef, l1_ratio, alphas, prev_r2, X_scaled, y_obs):
+#     patterns = [r"N_t", r"E_t", r"^2"]
+#
+#     # Find indices & names of features that match
+#     potential_features_to_remove = [
+#         (i, fname)
+#         for i, fname in enumerate(feature_names)
+#         if any(re.search(p, fname) for p in patterns)
+#     ]
+#
+#     for index, feature in potential_features_to_remove:
+#         new_coef = coef.copy()
+#         new_coef[index] = 0
+#
+#         mask = new_coef != 0
+#         model = ElasticNetCV(l1_ratio=l1_ratio, alphas=alphas, fit_intercept=False)
+#         model.fit(X_scaled[:, mask], y_obs)
+#
+#         new_coef = np.zeros_like(new_coef)
+#         new_coef[mask] = model.coef_
+#
+#         y_pred = model.predict(X_scaled[:, mask])
+#         r2 = r2_score(y_obs, y_pred)
+#
+#         if prev_r2 - r2 > 1e-3:
+#             break
+#
+#         prev_r2 = r2
+#         best_coef = new_coef.copy()
+#
+#     return best_coef, prev_r2
 
 def do_polynomial_regression(df, lv_ratio=0.6):
-    # TODO:
-    #   - See what happens when you leave out n*N, e*N, N^2, E^2, n^2 and e^2, because they can lead to extreme values
-
     # Make base nonlinear transformations of e and n
     df = df.copy()
+
+    with open('variance simulated BCI.csv', mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            df['dn'].tolist(),
+            df['de'].tolist()
+        ])
 
     # Remove outliers
     df = remove_outliers(df)
 
+    # print mean and variance in df['de']
     # Protect against zero/negative values for logs and inverses
     eps = 1e-12
     e = df['e'].clip(lower=eps)

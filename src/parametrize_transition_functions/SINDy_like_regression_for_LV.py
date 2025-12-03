@@ -1,3 +1,7 @@
+import ast
+import csv
+
+import seaborn as sns
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
@@ -27,6 +31,12 @@ def do_polynomial_regression(df, lv_ratio=0.6):
 
     # Make base nonlinear transformations of e and n
     df = df.copy()
+
+    with open('variance LV.csv', mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            df['dn'].tolist()
+        ])
 
     # Remove outliers
     df = remove_outliers(df)

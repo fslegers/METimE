@@ -518,7 +518,7 @@ def plot_trajectories(df):
 if __name__ == "__main__":
 
     for model in ['a', 'b', 'c', 'd', 'e', 'f']:
-        for var in [0.0, 0.05, 0.1, 0.2]:
+        for var in [0.0]:
 
             for iter in range(25):
                 ext = f'_model={model}_var={var}_iter={iter}'
@@ -528,91 +528,92 @@ if __name__ == "__main__":
                 censuses = df['census'].unique()[::4]
 
                 # Compute polynomial coefficients
+
                 alphas, r2_dn, scaler = sindy(df)
-                functions = get_functions()
-                alphas = alphas['Coefficient'].values
-
-                # Create list to store results
-                results_list = []
-
-                for census in df['census'].unique():
-                    print(f"\n Census: {census} \n")
-                    input_census = df[df['census'] == census]
-
-                    X = input_census[[
-                        'S_t', 'N_t'
-                    ]].drop_duplicates().iloc[0]
-
-                    macro_var = {
-                        'N/S': float(X['N_t'] / X['S_t']),
-                        'dN/S': input_census['dN/S'].unique()[0]
-                    }
-
-                    # Precompute functions(n, e)
-                    func_vals = get_function_values(functions, X, alphas, scaler,
-                                                    show_landscape=True)
-
-                    # Get empirical rank abundance distribution
-                    grouped = input_census.groupby('species')['n'].sum()
-                    empirical_rad = grouped.sort_values(ascending=False).values
-
-                    #######################################
-                    #####            METE             #####
-                    #######################################
-                    initial_lambdas = make_initial_guess(X)
-                    METE_lambdas = METE(
-                        initial_lambdas[:1],
-                        {
-                            'N/S': float(X['N_t'] / X['S_t'])
-                        },
-                        X,
-                        func_vals[:1],
-                        optimizer='trust-constr',
-                        maxiter=1e10
-                    )
-                    METE_lambdas = np.append(METE_lambdas, [0])
-                    mete_constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
-                    METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad, mete_constraint_errors)
-                    METE_lambdas = np.append(METE_lambdas, [0])
-
-                    #######################################
-                    #####           METimE            #####
-                    #######################################
-
-                    for w in [1]:
-                        print(" ")
-                        print("----------METimE----------")
-                        METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=1e10)
-                        print("Optimized lambdas: {}".format(METimE_lambdas[:1]))
-                        print("Slack variables: {}".format(METimE_lambdas[1:]))
-                        metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
-                        METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
-                        print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
-
-                        ##########################################
-                        #####           Save results         #####
-                        ##########################################
-                        results_list.append({
-                            'model': model,
-                            'census': census,
-                            'slack_weight': w,
-                            'N/S': macro_var['N/S'],
-                            'dN/S': macro_var['dN/S'],
-                            'r2_dn': r2_dn,
-                            'METE_error_N/S': mete_constraint_errors[0],
-                            'METE_error_dN/S': mete_constraint_errors[2],
-                            'METimE_error_N/S': metime_constraint_errors[0],
-                            'METimE_error_dN/S': metime_constraint_errors[2],
-                            'METE_AIC': METE_results['AIC'].values[0],
-                            'METE_MAE': METE_results['MAE'].values[0],
-                            'METE_RMSE': METE_results['RMSE'].values[0],
-                            'METimE_AIC': METimE_results['AIC'].values[0],
-                            'METimE_MAE': METimE_results['MAE'].values[0],
-                            'METimE_RMSE': METimE_results['RMSE'].values[0]
-                        })
-
-                        if iter == 0:
-                            plot_RADs(empirical_rad, METE_rad, METimE_rad, f'model_{ext}_census={census}_w_{w}', use_log=True)
-
-                results_df = pd.DataFrame(results_list)
-                results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/results_LV_df{ext}.csv', index=False)
+                # functions = get_functions()
+                # alphas = alphas['Coefficient'].values
+                #
+                # # Create list to store results
+                # results_list = []
+                #
+                # for census in df['census'].unique():
+                #     print(f"\n Census: {census} \n")
+                #     input_census = df[df['census'] == census]
+                #
+                #     X = input_census[[
+                #         'S_t', 'N_t'
+                #     ]].drop_duplicates().iloc[0]
+                #
+                #     macro_var = {
+                #         'N/S': float(X['N_t'] / X['S_t']),
+                #         'dN/S': input_census['dN/S'].unique()[0]
+                #     }
+                #
+                #     # Precompute functions(n, e)
+                #     func_vals = get_function_values(functions, X, alphas, scaler,
+                #                                     show_landscape=True)
+                #
+                #     # Get empirical rank abundance distribution
+                #     grouped = input_census.groupby('species')['n'].sum()
+                #     empirical_rad = grouped.sort_values(ascending=False).values
+                #
+                #     #######################################
+                #     #####            METE             #####
+                #     #######################################
+                #     initial_lambdas = make_initial_guess(X)
+                #     METE_lambdas = METE(
+                #         initial_lambdas[:1],
+                #         {
+                #             'N/S': float(X['N_t'] / X['S_t'])
+                #         },
+                #         X,
+                #         func_vals[:1],
+                #         optimizer='trust-constr',
+                #         maxiter=1e10
+                #     )
+                #     METE_lambdas = np.append(METE_lambdas, [0])
+                #     mete_constraint_errors = check_constraints(METE_lambdas, input_census, func_vals)
+                #     METE_results, METE_rad = evaluate_model(METE_lambdas, X, func_vals, empirical_rad, mete_constraint_errors)
+                #     METE_lambdas = np.append(METE_lambdas, [0])
+                #
+                #     #######################################
+                #     #####           METimE            #####
+                #     #######################################
+                #
+                #     for w in [1]:
+                #         print(" ")
+                #         print("----------METimE----------")
+                #         METimE_lambdas = run_optimization(METE_lambdas, macro_var, func_vals, slack_weight=w, maxiter=1e10)
+                #         print("Optimized lambdas: {}".format(METimE_lambdas[:1]))
+                #         print("Slack variables: {}".format(METimE_lambdas[1:]))
+                #         metime_constraint_errors = check_constraints(METimE_lambdas, input_census, func_vals)
+                #         METimE_results, METimE_rad = evaluate_model(METimE_lambdas, X, func_vals, empirical_rad, metime_constraint_errors)
+                #         print(f"AIC: {METimE_results['AIC'].values[0]}, MAE: {METimE_results['MAE'].values[0]}")
+                #
+                #         ##########################################
+                #         #####           Save results         #####
+                #         ##########################################
+                #         results_list.append({
+                #             'model': model,
+                #             'census': census,
+                #             'slack_weight': w,
+                #             'N/S': macro_var['N/S'],
+                #             'dN/S': macro_var['dN/S'],
+                #             'r2_dn': r2_dn,
+                #             'METE_error_N/S': mete_constraint_errors[0],
+                #             'METE_error_dN/S': mete_constraint_errors[2],
+                #             'METimE_error_N/S': metime_constraint_errors[0],
+                #             'METimE_error_dN/S': metime_constraint_errors[2],
+                #             'METE_AIC': METE_results['AIC'].values[0],
+                #             'METE_MAE': METE_results['MAE'].values[0],
+                #             'METE_RMSE': METE_results['RMSE'].values[0],
+                #             'METimE_AIC': METimE_results['AIC'].values[0],
+                #             'METimE_MAE': METimE_results['MAE'].values[0],
+                #             'METimE_RMSE': METimE_results['RMSE'].values[0]
+                #         })
+                #
+                #         if iter == 0:
+                #             plot_RADs(empirical_rad, METE_rad, METimE_rad, f'model_{ext}_census={census}_w_{w}', use_log=True)
+                #
+                # results_df = pd.DataFrame(results_list)
+                # results_df.to_csv(f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/LV/results_LV_df{ext}.csv', index=False)

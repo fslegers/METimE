@@ -5,6 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from scipy.stats import ttest_rel, wilcoxon
 
 
 # --- Format numbers ---
@@ -283,80 +284,6 @@ def how_much_difference(df):
     plt.tight_layout()
     plt.show()
 
-def cleaner_look(df):
-    # Colors
-    blueish = "#67a9cf"
-    greyish = "#4c4c4c"
-    orangy = "#ef8a62"
-
-    custom_params = {"axes.spines.right": False, "axes.spines.top": False}
-    sns.set_theme(style="ticks", rc=custom_params)
-
-    # Ensure numeric
-    numeric_cols = [
-        'METE_AIC', 'METimE_AIC', 'METE_MAE', 'METimE_MAE',
-        'METE_RMSE', 'METimE_RMSE', 'METE_error_N/S', 'METimE_error_N/S',
-        'METE_error_E/S', 'METimE_error_E/S', 'METE_error_dN/S', 'METimE_error_dN/S',
-        'METE_error_dE/S', 'METimE_error_dE/S'
-    ]
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Compute differences
-    df_diff = pd.DataFrame({
-        'AIC': df['METE_AIC'] - df['METimE_AIC'],
-        'MAE': df['METE_MAE'] - df['METimE_MAE'],
-        'RMSE': df['METE_RMSE'] - df['METimE_RMSE'],
-        'N/S error': df['METE_error_N/S'] - df['METimE_error_N/S'],
-        'E/S error': df['METE_error_E/S'] - df['METimE_error_E/S'],
-        'dN/S error': df['METE_error_dN/S'] - df['METimE_error_dN/S'],
-        'dE/S error': df['METE_error_dE/S'] - df['METimE_error_dE/S']
-    })
-
-    metrics = ['AIC', 'MAE', 'RMSE', 'N/S error', 'E/S error', 'dN/S error', 'dE/S error']
-
-    fig, axes = plt.subplots(1, 7, figsize=(16, 5), sharey=False)
-
-    for i, (ax, metric) in enumerate(zip(axes, metrics)):
-        values = df_diff[metric].dropna()
-
-        # Overlay boxplot without outliers
-        sns.boxplot(
-            y=values, ax=ax, width=0.5, showcaps=True, showfliers=False,
-            boxprops=dict(facecolor=blueish, edgecolor=greyish, linewidth=1.2, alpha=0.8),
-            whiskerprops=dict(color=greyish, linewidth=2.0),
-            capprops=dict(color=greyish, linewidth=2.0),
-            medianprops=dict(color=greyish, linewidth=4)
-        )
-
-        # Strong horizontal line at 0
-        ax.axhline(0, color=orangy, linewidth=4, linestyle="-", zorder=0)
-
-        # Compute percentage above 0
-        total = len(values)
-        above = (values > 0).sum()
-        perc_above = above / total * 100 if total > 0 else 0
-
-        # # Annotate percentages (centered)
-        # ax.text(0.5, 0.98, f"{perc_above:.1f}% > 0",
-        #         ha='center', va='top', transform=ax.transAxes,
-        #         fontsize=14)
-
-        #ax.set_title(f"{metric}\n{perc_above:.1f}% > 0", fontsize=16, pad=20, linespacing=2.0, fontweight='bold')
-        ax.set_title(f"{perc_above:.1f}% > 0", fontsize=16, pad=10)
-
-        if i == 0:
-            ax.set_ylabel("Difference\n(METE - METimE)", fontsize=16, linespacing=1.5)
-        else:
-            ax.set_ylabel("")
-        ax.set_xlabel(metric, fontsize=16)
-
-        ax.tick_params(axis='both', which='major', labelsize=12)
-
-    fig.text(0.5, 0.05, 'Metric', ha='center', fontsize=20)
-    plt.tight_layout(rect=[0, 0.1, 1, 1])
-    plt.show()
-
 def simple_violin(df):
     """
     Make a single figure with horizontal subplots:
@@ -431,6 +358,448 @@ def simple_violin(df):
     plt.tight_layout()
     plt.show()
 
+def cleaner_look(df):
+    greyish = "#4c4c4c"
+
+    custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+    sns.set_theme(style="ticks", rc=custom_params)
+
+    # Ensure numeric
+    numeric_cols = [
+        'METE_AIC', 'METimE_AIC', 'METE_MAE', 'METimE_MAE',
+        'METE_RMSE', 'METimE_RMSE', 'METE_error_N/S', 'METimE_error_N/S',
+        'METE_error_E/S', 'METimE_error_E/S', 'METE_error_dN/S', 'METimE_error_dN/S',
+        'METE_error_dE/S', 'METimE_error_dE/S'
+    ]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Compute differences
+    df_diff = pd.DataFrame({
+        'frac': df['frac'],
+        'iter': df['iter'],
+        'AIC': (df['METE_AIC'] - df['METimE_AIC']) / df['METE_AIC'],
+        'MAE': (df['METE_MAE'] - df['METimE_MAE']) / df['METE_MAE'],
+        'RMSE': (df['METE_RMSE'] - df['METimE_RMSE']) / df['METE_RMSE'],
+        'N/S error': (df['METE_error_N/S'] - df['METimE_error_N/S']) / df['METE_error_N/S'],
+        'E/S error': (df['METE_error_E/S'] - df['METimE_error_E/S']) / df['METE_error_E/S']
+    })
+
+    metrics = ['AIC', 'MAE', 'RMSE', 'N/S error', 'E/S error']
+
+    fig, axes = plt.subplots(1, 5, figsize=(20, 6), sharey=False)
+
+    for i, (ax, metric) in enumerate(zip(axes, metrics)):
+
+        # Use boxplot (handles repetitions via 'iter')
+        sns.boxplot(
+            x='frac',
+            y=metric,
+            data=df_diff,
+            palette='Set2',
+            hue='frac',
+            legend=False,
+            ax=ax,
+            showfliers=False,
+            linewidth=2
+        )
+
+        # Strong horizontal line at 0
+        ax.axhline(0, color=greyish, linewidth=3, linestyle="-", zorder=1)
+
+        if i == 0:
+            ax.set_ylabel("Relative difference", fontsize=18, linespacing=1.5)
+        else:
+            ax.set_ylabel("")
+
+        ax.set_xlabel("")
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        ax.set_title(metric, fontsize=18)
+
+    # Figure-wide x-label
+    fig.text(0.5, 0.05, "Fraction of population removed", ha='center', fontsize=18)
+    fig.text(0.5, 0.95, "Metric", ha='center', fontsize=22)
+    plt.tight_layout(rect=[0, 0.1, 1, 0.9])
+    plt.show()
+
+def cleaner_look_single(df):
+    dark_greyish = "#4c4c4c"
+    greyish = "#707070"
+    blueish = "#67a9cf"
+    orangy = "#ef8a62"
+
+    custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+    sns.set_theme(style="ticks", rc=custom_params)
+
+    numeric_cols = [
+        'METE_AIC', 'METimE_AIC', 'METE_MAE', 'METimE_MAE',
+        'METE_RMSE', 'METimE_RMSE', 'METE_error_N/S', 'METimE_error_N/S',
+        'METE_error_E/S', 'METimE_error_E/S', 'METE_error_dN/S', 'METimE_error_dN/S',
+        'METE_error_dE/S', 'METimE_error_dE/S'
+    ]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Compute differences
+    df_diff = pd.DataFrame({
+        'quad': df['quad'],
+        'census': df['census'],
+        'AIC': (df['METE_AIC'] - df['METimE_AIC']) / df['METE_AIC'],
+        'MAE': (df['METE_MAE'] - df['METimE_MAE']) / df['METE_MAE'],
+        'RMSE': (df['METE_RMSE'] - df['METimE_RMSE']) / df['METE_RMSE'],
+        'N/S error': (df['METE_error_N/S'] - df['METimE_error_N/S']) / df['METE_error_N/S'],
+        'E/S error': (df['METE_error_E/S'] - df['METimE_error_E/S']) / df['METE_error_E/S']
+    })
+
+    # ➡️ Melt to long format
+    df_long = df_diff.melt(
+        id_vars=['quad', 'census'],
+        value_vars=['MAE', 'RMSE', 'N/S error', 'E/S error'],
+        var_name='Metric',
+        value_name='Relative difference'
+    )
+
+    # ✅ One big boxplot
+    plt.figure(figsize=(4.5, 6))
+    ax = sns.boxplot(
+        x='Metric',
+        y='Relative difference',
+        color=blueish,
+        data=df_long,
+        showfliers=True,
+        linewidth=1.5,
+        showmeans=True,
+        medianprops={
+            "color": dark_greyish,
+            "linewidth": 3
+        },
+        meanprops={
+            "marker": "o",  # circle marker
+            "markerfacecolor": greyish,
+            "markeredgecolor": dark_greyish,
+            "markersize": 6  # adjust size as needed
+        }
+    )
+
+    # Strong horizontal line at 0
+    ax.axhline(0, color=greyish, linewidth=2, linestyle="--", zorder=1)
+    plt.xticks(rotation=30, ha="right")
+
+    ax.set_xlabel("")
+    ax.set_ylabel("Relative difference \n (METE - METimE) / METE", fontsize=18)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+
+    plt.tight_layout()
+
+    plt.savefig(
+        "empirical_BCI_boxplot.png",
+        dpi=300,
+        bbox_inches="tight",
+        transparent=True
+    )
+    plt.show()
+
+    # ➡️ Prepare data for AIC violin plot
+    df_aic = pd.melt(
+        df,
+        id_vars=['quad', 'census'],
+        value_vars=['METE_AIC', 'METimE_AIC'],
+        var_name='Model',
+        value_name='AIC'
+    )
+
+    # ✅ Rename for cleaner legend/labels
+    df_aic['Method'] = df_aic['Model'].replace({
+        'METE_AIC': 'METE',
+        'METimE_AIC': 'METimE'
+    })
+
+    # ✅ One big boxplot
+    plt.figure(figsize=(4.5, 6))
+
+    ax = sns.boxplot(
+        x='Method',
+        y='AIC',
+        hue='Method',
+        data=df_aic,
+        showfliers=True,
+        palette=[blueish, orangy],
+        linewidth=1.5,
+        showmeans=False,
+        medianprops={
+            "color": dark_greyish,
+            "linewidth": 3
+        },
+        meanprops={
+            "marker": "o",  # circle marker
+            "markerfacecolor": greyish,
+            "markeredgecolor": dark_greyish,
+            "markersize": 6  # adjust size as needed
+        }
+    )
+
+    ax.set_xlabel("MaxEnt method", fontsize=18)
+    ax.set_ylabel("AIC", fontsize=18)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+
+    plt.tight_layout()
+
+    # Save figure
+    plt.savefig(
+        "empirical_BCI_AIC_boxplot.png",
+        dpi=300,
+        bbox_inches="tight",
+        transparent=True
+    )
+
+    plt.show()
+
+def scatterplot(df):
+    greyish = "#4c4c4c"
+    custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+    sns.set_theme(style="ticks", rc=custom_params)
+
+    # Ensure numeric
+    numeric_cols = [
+        'METE_AIC', 'METimE_AIC', 'METE_MAE', 'METimE_MAE',
+        'METE_RMSE', 'METimE_RMSE', 'METE_error_N/S', 'METimE_error_N/S',
+        'METE_error_E/S', 'METimE_error_E/S'
+    ]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    metrics = ['AIC', 'MAE', 'RMSE', 'error_N/S', 'error_E/S']
+    METE_metrics = ['METE_' + m for m in metrics]
+    METimE_metrics = ['METimE_' + m for m in metrics]
+
+    fig, axes = plt.subplots(1, 5, figsize=(25, 5), sharey=False)
+
+    # We'll capture handles/labels from the first subplot that actually produces legend entries
+    handles, labels = None, None
+
+    for ax, metric, METE_metric, METimE_metric in zip(axes, metrics, METE_metrics, METimE_metrics):
+
+        # Scatter plot without legend
+        sns.scatterplot(
+            x=METE_metric,
+            y=METimE_metric,
+            data=df,
+            hue="quad",
+            palette="Set3",
+            ax=ax,
+            s=100,
+            alpha=0.8,
+            edgecolor=greyish,
+            linewidth=1.0,
+            legend=False
+        )
+
+        # Capture legend info if not already captured
+        if handles is None:
+            h, l = ax.get_legend_handles_labels()
+            if h:  # only assign if handles exist
+                handles, labels = h, l
+
+        # Diagonal x=y line
+        lims = [
+            np.nanmin([ax.get_xlim(), ax.get_ylim()]),
+            np.nanmax([ax.get_xlim(), ax.get_ylim()])
+        ]
+        ax.plot(lims, lims, '--', color=greyish, lw=1.5, zorder=0)
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
+
+        # Styling
+        ax.set_xlabel("METE", fontsize=12)
+        ax.set_ylabel("METimE", fontsize=12)
+        ax.set_title(metric, fontsize=14)
+        ax.tick_params(axis="both", which="major", labelsize=10)
+
+    # Add global legend at bottom if handles exist
+    if handles:
+        fig.legend(
+            handles, labels, title="Quadrat", title_fontsize=13,
+            loc="lower center", ncol=len(labels), frameon=False, fontsize=12
+        )
+
+    plt.tight_layout(rect=[0, 0.1, 1, 0.9])  # leave space for bottom legend
+    plt.savefig(
+        "empirical_BCI_scatterplot.png",
+        dpi=300,
+        bbox_inches="tight",
+        transparent=True
+    )
+    plt.show()
+
+def summarize_results_latex(df: pd.DataFrame) -> str:
+    """
+    Compute summary stats and return a LaTeX table of results.
+
+    Expected columns in df:
+        'METE_MAE', 'METE_RMSE', 'METE_NS', 'METE_ES',
+        'METimE_MAE', 'METimE_RMSE', 'METimE_NS', 'METimE_ES'
+    """
+    # 1️⃣ Select best slack weight
+    df = select_best_slack_weight(df, 'MAE')
+
+    # 2️⃣ Summary statistics
+    metrics = ['MAE', 'RMSE', 'error_N/S', 'error_E/S']
+    rows = []
+    for m in metrics:
+        mete = df[f"METE_{m}"]
+        metime = df[f"METimE_{m}"]
+        rows.append([
+            m,
+            f"{mete.min():.3f}", f"{mete.max():.3f}",
+            f"{metime.min():.3f}", f"{metime.max():.3f}"
+        ])
+
+    # 3️⃣ Outliers
+    diff_ratio = (df['METE_MAE'] - df['METimE_MAE']) / df['METE_MAE']
+    q1 = diff_ratio.quantile(0.25)
+    iqr = diff_ratio.quantile(0.75) - q1
+    lower_bound = q1 - 1.5 * iqr
+    outliers = diff_ratio < lower_bound
+    pct_outliers = 100 * outliers.mean()
+
+    # 4️⃣ Percentage of times METE_MAE > METimE_MAE (excluding outliers)
+    mask = ~outliers
+    pct_mete_worse = 100 * (df.loc[mask, 'METE_MAE'] > df.loc[mask, 'METimE_MAE']).mean()
+
+    # 5️⃣ Make LaTeX table
+    header = (
+        "\\begin{table}[ht]\n"
+        "\\centering\n"
+        "\\begin{tabular}{lcccc}\n"
+        "\\toprule\n"
+        "Metric & METE Min & METE Max & METimE Min & METimE Max \\\\\n"
+        "\\midrule\n"
+    )
+
+    body = "\n".join(
+        f"{m} & {mete_min} & {mete_max} & {metime_min} & {metime_max} \\\\"
+        for m, mete_min, mete_max, metime_min, metime_max in rows
+    )
+
+    footer = (
+        "\\midrule\n"
+        f"\\multicolumn{{5}}{{l}}{{Outliers: {pct_outliers:.1f}\\%}} \\\\\n"
+        f"\\multicolumn{{5}}{{l}}{{METE worse than METimE (excl. outliers): {pct_mete_worse:.1f}\\%}} \\\\\n"
+        "\\bottomrule\n"
+        "\\end{tabular}\n"
+        "\\caption{Summary statistics comparing METE and METimE.}\n"
+        "\\label{tab:mete_metime_summary}\n"
+        "\\end{table}"
+    )
+
+    return header + body + "\n" + footer
+
+def transition_functions_boxplot(df):
+    dark_greyish = "#4c4c4c"
+    greyish = "#707070"
+    blueish = "#67a9cf"
+    orangy = "#ef8a62"
+
+    custom_params = {"axes.spines.right": False, "axes.spines.top": False}
+    sns.set_theme(style="ticks", rc=custom_params)
+
+    # Ensure numeric
+    df['r2_dn'] = pd.to_numeric(df['r2_dn'], errors='coerce')
+    df['r2_de'] = pd.to_numeric(df['r2_de'], errors='coerce')
+
+    # Create separate DataFrames with correct "Transition function" labels
+    df_dn = pd.DataFrame({
+        'Transition function': 'f',
+        'R^2': df['r2_dn'],
+        'Metric': 'r2_dn'
+    })
+    df_de = pd.DataFrame({
+        'Transition function': 'h',
+        'R^2': df['r2_de'],
+        'Metric': 'r2_de'
+    })
+
+    # Combine
+    df_plot = pd.concat([df_dn, df_de], ignore_index=True)
+
+    # Boxplot
+    plt.figure(figsize=(4.5, 6))
+    ax = sns.boxplot(
+        x='Transition function',
+        y='R^2',
+        data=df_plot,
+        showfliers=True,
+        linewidth=1.5,
+        showmeans=True,
+        color=blueish,
+        medianprops={"color": dark_greyish,
+                     "linewidth": 3},
+        meanprops={
+            "marker": "o",
+            "markerfacecolor": dark_greyish,
+            "markeredgecolor": dark_greyish,
+            "markersize": 6
+        }
+    )
+
+    # # Horizontal line at 0
+    # ax.axhline(0, color=greyish, linewidth=2, linestyle="--", zorder=1)
+
+    ax.set_xlabel("")
+    ax.set_xticklabels([
+        r"$f \approx \Delta n$",
+        r"$h \approx \Delta \overline{\varepsilon}$"], fontsize=18)
+
+    ax.set_ylabel("Coefficient of determination (R²)", fontsize=18)
+    ax.tick_params(axis='y', which='major', labelsize=14)  # y-axis smaller
+    ax.tick_params(axis='x', which='major', labelsize=18)  # x-axis larger
+
+    plt.tight_layout()
+    plt.savefig(
+        "empirical_BCI_transition_functions.png",
+        dpi=300,
+        bbox_inches="tight",
+        transparent=True
+    )
+    plt.show()
+
+def do_statistics(df_model):
+    results = []  # Store test results
+
+    diff = df_model['METE_RMSE'] - df_model['METimE_RMSE']
+
+    wilcoxon_res = wilcoxon(df_model['METE_RMSE'], df_model['METimE_RMSE'], method="asymptotic")
+    p_val_wilcoxon = wilcoxon_res.pvalue
+    z_val_wilcoxon = wilcoxon_res.zstatistic
+
+    # Collect results
+    results.append({
+        'wilcoxon_p': p_val_wilcoxon,
+        'wilcoxon_z': z_val_wilcoxon,
+        'median_METE': np.median(df_model['METE_RMSE']),
+        'median_METimE': np.median(df_model['METimE_RMSE']),
+    })
+
+    results_df = pd.DataFrame(results)
+
+    results_df = results_df[['median_METE', 'median_METimE', 'wilcoxon_p', 'wilcoxon_z']]
+
+    results_df['significant'] = results_df['wilcoxon_p'].apply(
+        lambda p: 'yes' if p < 0.05 else 'no'
+    )
+
+    results_df['effect_size'] = results_df['wilcoxon_z'].apply(
+        lambda x: x / np.sqrt(len(df_model) * 2)
+    )
+
+    results_df['effect_category'] = results_df['effect_size'].apply(
+        lambda p: 'none' if np.abs(p) < 0.1 else
+        'small' if np.abs(p) < .3 else
+        'medium' if np.abs(p) < .5 else
+        'large'
+    )
+
+    return results_df
 
 
 
@@ -440,22 +809,24 @@ if __name__ == "__main__":
     all_files = glob.glob(os.path.join(path, "*.csv"))
     df = pd.concat((pd.read_csv(f) for f in all_files), ignore_index=True)
 
-    # # For each quadrat, plot the AIC, MAE and RMSE per slack_weight
-    # for quad in df['quad'].unique():
-    #     df_quad = df[df['quad'] == quad]
-    #     metrics_per_slack_weight(df_quad, quad)
+    # For each quadrat, plot the AIC, MAE and RMSE per slack_weight
+    for quad in df['quad'].unique():
+        df_quad = df[df['quad'] == quad]
+        metrics_per_slack_weight(df_quad, quad)
 
     # Calculate something and turn it into a latex table
     df = select_best_slack_weight(df, 'MAE')
 
-    # Remove the one outlier
-    # Find the one with extreme METimE_MAE
-    outliers = df[df['METimE_MAE'] - df['METE_MAE'] > 100]
-    print(outliers)
-    df = df[df['METimE_MAE'] - df['METE_MAE'] <= 100]
+    # Also report how much better METimE predicts than METE on average, or vise versa, also reporting outliers
+    cleaner_look_single(df)
+    scatterplot(df)
 
-    # Find the best and worst METimE_MAE
-    diff = (df['METimE_MAE'] - df['METE_MAE'])/df['METE_MAE']
+    transition_functions_boxplot(df)
+
+    latex_code = summarize_results_latex(df)
+    print(latex_code)
+
+    diff = (df['METimE_MAE'] - df['METE_MAE']) / df['METE_MAE']
 
     best_idx = diff.idxmin()  # index of the minimum difference
     worst_idx = diff.idxmax()  # index of the maximum difference
@@ -466,10 +837,6 @@ if __name__ == "__main__":
     print(f"Best:\n{best}\n")
     print(f"Worst:\n{worst}\n")
 
-    fill_latex_table(df)
-    print_additional_metrics(df)
+    do_statistics(df)
 
-    # Also report how much better METimE predicts than METE on average, or vise versa, also reporting outliers
-    #how_much_difference(df)
-    simple_violin(df)
-    cleaner_look(df)
+    cleaner_look_single(df)

@@ -136,8 +136,14 @@ def penalized_entropy_grad(vars, func_vals, macro_var, scales, slack_weight = 1.
 
     # Gradient of penalty part
     grad_penalty = np.zeros(len(lambdas), dtype=float)
+
     if slack_weight != 0.0:
-        constrained_indices = [2, 3]
+
+        if len(macro_var) == 3:
+            constrained_indices = [2]
+        else:
+            constrained_indices = [2, 3]
+
         for c_idx in constrained_indices:
             target_key = 'dN/S' if c_idx == 2 else 'dE/S'
             target = macro_var[target_key]
@@ -148,6 +154,7 @@ def penalized_entropy_grad(vars, func_vals, macro_var, scales, slack_weight = 1.
                 # error is just the expected value
                 err_c = expected_c
                 d_errc_d_expected = 1.0
+
             else:
                 # relative error (not squared)
                 err_c = (expected_c - target) / target
@@ -318,7 +325,7 @@ def run_optimization(vars, macro_var, func_vals, slack_weight=1, maxiter=1e08):
 
     result = minimize(penalized_entropy,
                       vars,
-                      #jac=penalized_entropy_grad,
+                      jac=penalized_entropy_grad,
                       args=(func_vals, macro_var, scales, slack_weight),
                       constraints=constraints,
                       bounds=bounds,
@@ -453,12 +460,12 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, obs_label="Simulat
 
     # Plot with updated styles
     plt.plot(ranks, empirical_rad, 'o-', color=greyish, markersize=6, linewidth=2, label=obs_label)
-    plt.plot(ranks, METE_rad, 's--', color=blueish, markersize=6, linewidth=2, label='METE')
-    plt.plot(ranks, METimE_rad, '^--', color=redish, markersize=6, linewidth=2, label='METimE')
+    #plt.plot(ranks, METE_rad, 's--', color=blueish, markersize=6, linewidth=2, label='METE')
+    #plt.plot(ranks, METimE_rad, '^--', color=redish, markersize=6, linewidth=2, label='METimE')
 
     plt.xlabel("Rank", fontsize=16)
 
-    plt.title(f"Slack weight: {weight}")
+    #plt.title(f"Slack weight: {weight}")
 
     # Handle log scale
     if use_log:
@@ -473,8 +480,8 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, obs_label="Simulat
     plt.xticks(fontsize=14)
     plt.yticks(fontsize=14)
 
-    plt.legend(fontsize=12)
-    plt.grid(True, linestyle='--', alpha=0.5)
+    #plt.legend(fontsize=12)
+    #plt.grid(True, linestyle='--', alpha=0.5)
     plt.tight_layout()
 
     save_path = f'C:/Users/5605407/OneDrive - Universiteit Utrecht/Documents/PhD/Chapter_2/Results/BCI/{save_name}.png'
@@ -484,6 +491,7 @@ def plot_RADs(empirical_rad, METE_rad, METimE_rad, save_name, obs_label="Simulat
         plt.savefig(save_path, dpi=300)
         plt.close()
     else:
+        plt.savefig('example sad.png', transparent=True)
         plt.show()
 
 def plot_trajectories(df):
@@ -554,7 +562,7 @@ def add_row(data):
 
 if __name__ == "__main__":
     # Use ext='' for full BCI, or ext='_quadrat_i' for quadrat i data
-    for i in [2, 3, 4, 5, 6, 7, 8, 1, 0]:
+    for i in [4, 5]:
         ext = f'_quadrat_{i}'
         #ext = ''
 
@@ -602,7 +610,7 @@ if __name__ == "__main__":
 
             func_vals, _ = get_function_values(functions, X, alphas, betas, scaler,
                                                [max_n, min_e, max_e],
-                                               show_landscape=True,
+                                               show_landscape=False,
                                                training_points=input[['n', 'e']].values)
 
             #######################################
